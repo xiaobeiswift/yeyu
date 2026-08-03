@@ -1,0 +1,4 @@
+[submodule "maps/EntryMap/script/y3"]
+	path = maps/EntryMap/script/y3
+	url = https://github.com/y3-editor/y3-lualib.git
+

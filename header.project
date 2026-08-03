@@ -1,0 +1,22 @@
+{
+    "create_stamp": "202306120000", 
+    "editor_stamp": "202306120000", 
+    "encrypt_sections": [
+        "archive_data", 
+        "global_archive_data", 
+        "archive_table_data"
+    ], 
+    "entry_map": {
+        "id": 153474936276712664214184199110824525261, 
+        "name": "EntryMap"
+    }, 
+    "lobby_map": {
+        "id": "", 
+        "name": ""
+    }, 
+    "major_version_number": "2.0", 
+    "phy_mode": "2.5d", 
+    "project_id": 153015847659057646824268160098845294029, 
+    "project_name": "yeyu", 
+    "version": 17
+}

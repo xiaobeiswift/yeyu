@@ -1,0 +1,27 @@
+# Local Y3/Codex toolchain. Its exact revision is recorded in toolchain.lock.
+/.y3maker/
+
+# Editor/session state.
+/lock/
+/archive/archive_storage.json
+/.vscode/
+**/.log/
+**/log/
+*.log
+
+# Third-party editor preset content is not part of the original game source.
+/plugins/
+
+# Temporary and test output.
+*.tmp
+*.bak
+*.swp
+*.pyc
+*~
+Thumbs.db
+.DS_Store
+**/__pycache__/
+/.idea/
+/tmp/
+/test-results/
+/coverage/

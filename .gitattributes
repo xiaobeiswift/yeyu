@@ -1,0 +1,30 @@
+* text=auto
+
+*.lua  text eol=lf
+*.md   text eol=lf
+*.mdc  text eol=lf
+*.json text eol=lf
+*.py   text eol=lf
+*.csv  text eol=lf
+*.project text eol=lf
+*.map  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
+*.dds  binary
+*.tga  binary
+*.wav  binary
+*.mp3  binary
+*.ogg  binary
+*.fbx  binary
+*.gmp  binary
+*.upui binary
