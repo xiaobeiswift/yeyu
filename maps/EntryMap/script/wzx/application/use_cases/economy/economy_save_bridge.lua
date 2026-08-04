@@ -1,32 +1,27 @@
-local CharacterReceiptCodec = require 'wzx.domain.character.character_receipt_codec'
-local CharacterSaveCodec = require 'wzx.domain.character.character_save_codec'
 local CreateNewSave = require 'wzx.application.use_cases.save.create_new_save'
-local Ordered = require 'wzx.domain.common.ordered'
 local Result = require 'wzx.domain.common.result'
 local RuntimeId = require 'wzx.domain.common.runtime_id'
 local SaveCheckpoint = require 'wzx.application.use_cases.save.save_checkpoint'
 local SlotPayloadUtil = require 'wzx.application.save.slot_payload_util'
 
-local CharacterSaveBridge = {}
-local bytewise_string_less = Ordered.bytewise_string_less
+local EconomySaveBridge = {}
 local error_value = error
 local get_metatable = getmetatable
 local raw_get = rawget
 local result_err = Result.err
 local result_ok = Result.ok
 local set_metatable = setmetatable
-local table_sort = table.sort
 local type_value = type
 local validate_component = RuntimeId.validate_component
 
 local Bridge = {}
 Bridge.__index = Bridge
 Bridge.__newindex = function()
-    error_value('character save bridge is read-only', 2)
+    error_value('economy save bridge is read-only', 2)
 end
 Bridge.__metatable = false
 
-local STATES = setmetatable({}, { __mode = 'k' })
+local STATES = set_metatable({}, { __mode = 'k' })
 local DEFAULT_SAVE_SEED = 1
 
 local function fail(code, reason, details, retryable)
@@ -34,7 +29,7 @@ local function fail(code, reason, details, retryable)
     details.reason = reason
     return result_err(
         code,
-        'error.character.save_bridge_' .. string.lower(code),
+        'error.economy.save_bridge_' .. string.lower(code),
         retryable == true,
         details
     )
@@ -42,43 +37,6 @@ end
 
 local function invalid_argument(reason, details)
     return fail('INVALID_ARGUMENT', reason, details, false)
-end
-
-local function character_less(left, right)
-    return bytewise_string_less(left.character_id, right.character_id)
-end
-
-local function talent_less(left, right)
-    if left.character_id ~= right.character_id then
-        return bytewise_string_less(left.character_id, right.character_id)
-    end
-    return bytewise_string_less(left.talent_id, right.talent_id)
-end
-
-local function receipt_less(left, right)
-    return bytewise_string_less(left.receipt_id, right.receipt_id)
-end
-
-local function copy_state(state)
-    local talent_ids = {}
-    local index
-    for index = 1, #state.unlocked_talent_ids do
-        talent_ids[index] = state.unlocked_talent_ids[index]
-    end
-    local copied = {
-        character_id = state.character_id,
-        definition_version = state.definition_version,
-        level = state.level,
-        experience = state.experience,
-        awakening_rank = state.awakening_rank,
-        unlocked_talent_ids = talent_ids,
-        created_receipt_id = state.created_receipt_id,
-        revision = state.revision,
-    }
-    if state.custom_name ~= nil then
-        copied.custom_name = state.custom_name
-    end
-    return copied
 end
 
 local function is_safe_integer(value, minimum, maximum)
@@ -99,97 +57,6 @@ local function is_safe_integer(value, minimum, maximum)
     return true
 end
 
-function Bridge:snapshot_from_repository(player_save_scope)
-    local state = STATES[self]
-    if state == nil then
-        return invalid_argument('BRIDGE_AUTHORITY_REQUIRED')
-    end
-    local repository = state.repository
-    if type_value(repository.get_authority_snapshot) ~= 'function' then
-        return fail(
-            'REPOSITORY_SNAPSHOT_UNSUPPORTED',
-            'GET_AUTHORITY_SNAPSHOT_REQUIRED',
-            nil,
-            false
-        )
-    end
-    local authority = repository:get_authority_snapshot()
-    local player = authority.players and authority.players[player_save_scope]
-    if player == nil then
-        return result_ok({
-            revision = 0,
-            character_states = {},
-            talent_unlock_rows = {},
-            character_save_revision = 0,
-            receipt_save_revision = 0,
-            receipt_rows = {},
-        })
-    end
-
-    local states = {}
-    local character_id
-    local character_state
-    for character_id, character_state in pairs(player.characters or {}) do
-        states[#states + 1] = copy_state(character_state)
-    end
-    table_sort(states, character_less)
-
-    local talent_rows = {}
-    local index
-    for index = 1, #states do
-        local row = states[index]
-        local talent_index
-        for talent_index = 1, #row.unlocked_talent_ids do
-            talent_rows[#talent_rows + 1] = {
-                character_id = row.character_id,
-                talent_id = row.unlocked_talent_ids[talent_index],
-                unlocked_revision = 0,
-            }
-        end
-    end
-    table_sort(talent_rows, talent_less)
-
-    local receipt_rows = {}
-    local receipt_id
-    local transaction
-    for receipt_id, transaction in pairs(authority.receipts or {}) do
-        if transaction.player_save_scope == player_save_scope
-            and transaction.status == 'COMMITTED'
-        then
-            local changed = transaction.expected_character_save_revision
-                ~= transaction.character_save_revision
-            receipt_rows[#receipt_rows + 1] = {
-                receipt_id = transaction.receipt_id,
-                transaction_id = transaction.transaction_id,
-                operation_type = transaction.operation_type,
-                payload_hash = transaction.command_digest,
-                expected_result_digest = transaction.result_digest,
-                transport_request_key = transaction.request_key,
-                status = 'COMMITTED',
-                expected_character_save_revision =
-                    transaction.expected_character_save_revision,
-                target_character_save_revision =
-                    transaction.character_save_revision,
-                character_state_changed = changed,
-                receipt_revision = transaction.receipt_save_revision,
-                result_schema_version = 1,
-                result_digest = transaction.result_digest,
-                result_ref = 'character_result:' .. transaction.receipt_id,
-            }
-        end
-    end
-    table_sort(receipt_rows, receipt_less)
-
-    return result_ok({
-        revision = player.character_save_revision or 0,
-        character_states = states,
-        talent_unlock_rows = talent_rows,
-        character_save_revision = player.character_save_revision or 0,
-        receipt_save_revision = player.receipt_save_revision or 0,
-        receipt_rows = receipt_rows,
-    })
-end
-
 local function ensure_slot1_context(state, player_ref, player_save_scope, request_id, input)
     local context = SlotPayloadUtil.load_slot1_context(
         state.coordinator,
@@ -206,12 +73,11 @@ local function ensure_slot1_context(state, player_ref, player_save_scope, reques
     if state.auto_create_save ~= true then
         return fail(
             'SAVE_NOT_READY',
-            'SLOT1_REQUIRED_BEFORE_CHARACTER_PERSIST',
+            'SLOT1_REQUIRED_BEFORE_ECONOMY_PERSIST',
             { player_ref = player_ref },
             false
         )
     end
-
     local save_seed = raw_get(input, 'save_seed') or state.default_save_seed
     if not is_safe_integer(save_seed, 1, 2147483646) then
         return invalid_argument('SAVE_SEED_INVALID', { field = 'save_seed' })
@@ -240,7 +106,7 @@ local function ensure_slot1_context(state, player_ref, player_save_scope, reques
     })
 end
 
-function Bridge:persist_player_characters(input)
+function Bridge:persist_player_economy(input)
     local state = STATES[self]
     if state == nil then
         return invalid_argument('BRIDGE_AUTHORITY_REQUIRED')
@@ -265,31 +131,11 @@ function Bridge:persist_player_characters(input)
     if not player_ref.ok then
         return invalid_argument('PLAYER_REF_INVALID', { field = 'player_ref' })
     end
-    local request_id = raw_get(input, 'request_id') or 'request_character_save'
+    local request_id = raw_get(input, 'request_id') or 'request_economy_save'
 
-    local snapshot = self:snapshot_from_repository(player_save_scope.value)
-    if not snapshot.ok then
-        return snapshot
-    end
-
-    local character_bundle = state.codec:encode_current({
-        revision = snapshot.value.revision,
-        character_states = snapshot.value.character_states,
-        talent_unlock_rows = snapshot.value.talent_unlock_rows,
-    })
-    if not character_bundle.ok then
-        return character_bundle
-    end
-
-    local receipt_bundle = state.receipt_codec:validate_current({
-        character_operation_metadata = {
-            schema_version = 1,
-            revision = snapshot.value.receipt_save_revision,
-        },
-        character_operation_receipts = snapshot.value.receipt_rows,
-    })
-    if not receipt_bundle.ok then
-        return receipt_bundle
+    local bundles = state.store:export_save_bundles()
+    if not bundles.ok then
+        return bundles
     end
 
     local slot1 = ensure_slot1_context(
@@ -314,15 +160,15 @@ function Bridge:persist_player_characters(input)
         )
     end
 
-    local slot3 = SlotPayloadUtil.load_slot_state(
+    local slot4 = SlotPayloadUtil.load_slot_state(
         state.coordinator,
         state.save_invoke,
         player_ref.value,
-        3,
-        request_id .. '_load3'
+        4,
+        request_id .. '_load4'
     )
-    if not slot3.ok then
-        return slot3
+    if not slot4.ok then
+        return slot4
     end
     local slot5 = SlotPayloadUtil.load_slot_state(
         state.coordinator,
@@ -335,12 +181,18 @@ function Bridge:persist_player_characters(input)
         return slot5
     end
 
-    -- Slot 5 is shared. Replace only character-owned sections.
+    local merged_slot4 = SlotPayloadUtil.merge_sections(slot4.value.payload, {
+        economy_metadata = bundles.value.slot4.economy_metadata,
+        currency_balance_rows = bundles.value.slot4.currency_balance_rows,
+    })
+    if not merged_slot4.ok then
+        return merged_slot4
+    end
     local merged_slot5 = SlotPayloadUtil.merge_sections(slot5.value.payload, {
-        character_operation_metadata =
-            receipt_bundle.value.character_operation_metadata,
-        character_operation_receipts =
-            receipt_bundle.value.character_operation_receipts,
+        economy_receipt_metadata = bundles.value.slot5.economy_receipt_metadata,
+        economy_reward_receipts = bundles.value.slot5.economy_reward_receipts,
+        economy_source_occurrences =
+            bundles.value.slot5.economy_source_occurrences,
     })
     if not merged_slot5.ok then
         return merged_slot5
@@ -359,9 +211,9 @@ function Bridge:persist_player_characters(input)
         content_version = raw_get(input, 'content_version') or 'content-v1',
         dirty_slots = {
             {
-                slot_id = 3,
-                expected_revision = slot3.value.expected_revision,
-                payload = character_bundle.value,
+                slot_id = 4,
+                expected_revision = slot4.value.expected_revision,
+                payload = merged_slot4.value,
             },
             {
                 slot_id = 5,
@@ -380,27 +232,23 @@ function Bridge:persist_player_characters(input)
         checkpoint_id = saved.value.checkpoint_id,
         transaction_id = saved.value.manifest_transaction_id,
         data_transaction_id = saved.value.data_transaction_id,
-        character_save_revision = snapshot.value.character_save_revision,
-        receipt_save_revision = snapshot.value.receipt_save_revision,
-        envelope_revision = slot3.value.expected_revision + advanced,
-        receipt_envelope_revision = slot5.value.expected_revision + advanced,
+        slot4_revision = slot4.value.expected_revision + advanced,
+        slot5_revision = slot5.value.expected_revision + advanced,
         slot1_revision = saved.value.slot1_revision,
         manifest = saved.value.manifest,
-        bundle = character_bundle.value,
-        receipt_bundle = receipt_bundle.value,
+        slot4_bundle = bundles.value.slot4,
+        slot5_bundle = bundles.value.slot5,
         created_save = slot1.value.created_now == true,
     })
 end
 
-function CharacterSaveBridge.bind(options)
+function EconomySaveBridge.bind(options)
     if type_value(options) ~= 'table' or getmetatable(options) ~= nil then
         return invalid_argument('OPTIONS_REQUIRED')
     end
-    local repository = raw_get(options, 'repository')
+    local store = raw_get(options, 'store')
     local coordinator = raw_get(options, 'coordinator')
     local save_invoke = raw_get(options, 'save_invoke')
-    local codec = raw_get(options, 'codec')
-    local receipt_codec = raw_get(options, 'receipt_codec')
     local auto_create_save = raw_get(options, 'auto_create_save')
     if auto_create_save == nil then
         auto_create_save = true
@@ -408,10 +256,10 @@ function CharacterSaveBridge.bind(options)
     local default_save_seed = raw_get(options, 'default_save_seed')
         or DEFAULT_SAVE_SEED
 
-    if type_value(repository) ~= 'table' then
-        return invalid_argument('REPOSITORY_REQUIRED', {
-            field = 'repository',
-        })
+    if type_value(store) ~= 'table'
+        or type_value(store.export_save_bundles) ~= 'function'
+    then
+        return invalid_argument('STORE_REQUIRED', { field = 'store' })
     end
     if type_value(coordinator) ~= 'table'
         or type_value(coordinator.write_slots) ~= 'function'
@@ -430,30 +278,6 @@ function CharacterSaveBridge.bind(options)
         return invalid_argument('DEFAULT_SAVE_SEED_INVALID', {
             field = 'default_save_seed',
         })
-    end
-    if codec == nil then
-        local bound = CharacterSaveCodec.bind({
-            limits_version = 1,
-            max_character_rows = 64,
-            max_talent_rows = 512,
-        })
-        if not bound.ok then
-            return bound
-        end
-        codec = bound.value
-    elseif not CharacterSaveCodec.is_authority(codec) then
-        return invalid_argument('CODEC_AUTHORITY_REQUIRED', {
-            field = 'codec',
-        })
-    end
-    if receipt_codec == nil then
-        local bound = CharacterReceiptCodec.bind({
-            max_receipt_rows = 256,
-        })
-        if not bound.ok then
-            return bound
-        end
-        receipt_codec = bound.value
     end
 
     local create_new_save = raw_get(options, 'create_new_save')
@@ -475,11 +299,9 @@ function CharacterSaveBridge.bind(options)
 
     local bridge = set_metatable({}, Bridge)
     STATES[bridge] = {
-        repository = repository,
+        store = store,
         coordinator = coordinator,
         save_invoke = save_invoke,
-        codec = codec,
-        receipt_codec = receipt_codec,
         create_new_save = create_new_save,
         save_checkpoint = save_checkpoint,
         auto_create_save = auto_create_save == true,
@@ -488,8 +310,8 @@ function CharacterSaveBridge.bind(options)
     return result_ok(bridge)
 end
 
-function CharacterSaveBridge.is_authority(value)
+function EconomySaveBridge.is_authority(value)
     return STATES[value] ~= nil
 end
 
-return CharacterSaveBridge
+return EconomySaveBridge

@@ -185,6 +185,23 @@ function MemorySaveStore.new()
         return snapshot
     end
 
+    -- Offline test helper only: inject a committed envelope without stage/commit.
+    function fake:force_commit_envelope(player_ref, slot_id, envelope)
+        if type_value(player_ref) ~= 'string'
+            or type_value(slot_id) ~= 'number'
+            or type_value(envelope) ~= 'table'
+        then
+            error('force_commit_envelope requires player_ref, slot_id, envelope')
+        end
+        local validated = SaveEnvelope.validate(envelope)
+        if not validated.ok then
+            error('force_commit_envelope requires a valid SaveEnvelope')
+        end
+        local bucket = player_table(committed, player_ref)
+        bucket[slot_id] = copy_envelope(envelope)
+        return true
+    end
+
     return fake
 end
 
