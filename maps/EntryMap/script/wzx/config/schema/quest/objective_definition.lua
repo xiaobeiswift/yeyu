@@ -59,7 +59,7 @@ local TARGET_PREFIX = {
     COMPLETE_ENCOUNTER = 'encounter_',
     DEFEAT_ENEMY = 'enemy_',
     TALK = 'dialogue_',
-    REACH_LOCATION = 'loc_',
+    REACH_LOCATION = 'location_',
     ACQUIRE_ITEM = 'item_',
     OWN_ITEM = 'item_',
 }
