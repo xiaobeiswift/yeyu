@@ -20,5 +20,6 @@ return {
     'wzx.tests.test_character_receipt_codec',
     'wzx.tests.test_character_repository_port',
     'wzx.tests.test_fake_character_repository',
+    'wzx.tests.test_reward_catalog',
     'wzx.tests.test_bootstrap',
 }

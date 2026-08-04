@@ -1,4 +1,5 @@
 local Catalog = require 'wzx.config.schema.character.catalog'
+local RewardCatalog = require 'wzx.config.schema.reward.catalog'
 local Result = require 'wzx.domain.common.result'
 local RuntimeId = require 'wzx.domain.common.runtime_id'
 local CharacterAggregate = require 'wzx.domain.character.character_aggregate'
@@ -11,8 +12,10 @@ local error_value = error
 local set_metatable = setmetatable
 local get_metatable = getmetatable
 local is_catalog_authority = Catalog.is_authority
+local is_reward_catalog_authority = RewardCatalog.is_authority
 local resolve_catalog_character = Catalog.resolve_character
 local validate_catalog_owned_talents = Catalog.validate_owned_talents
+local validate_level_reward = RewardCatalog.validate_as_level_reward
 local aggregate_create_owned = CharacterAggregate.create_owned
 local aggregate_grant_experience = CharacterAggregate.grant_experience
 local aggregate_validate = CharacterAggregate.validate
@@ -155,6 +158,24 @@ local function plan_experience_grant(self, state, amount)
     if not rewards.ok then
         return rewards
     end
+
+    -- When a sealed RewardCatalog is bound, every planned level reward must
+    -- resolve and expand without CHARACTER_XP leaves. Unbound rules remain a
+    -- pure offline planner and must not be used for production grant paths.
+    local authority = authority_state(self)
+    if authority ~= nil and authority.reward_catalog ~= nil then
+        local reward_index
+        for reward_index = 1, #rewards.value do
+            local safe = validate_level_reward(
+                authority.reward_catalog,
+                rewards.value[reward_index].reward_ref
+            )
+            if not safe.ok then
+                return safe
+            end
+        end
+    end
+
     local proof = derive_level_reward_plan({
         character_id = before_state.character_id,
         definition_version = validated.value.definition_facts.definition_version,
@@ -185,6 +206,8 @@ local function plan_experience_grant(self, state, amount)
         reward_refs = reward_refs,
         reward_ref_count = proof.value.count,
         reward_plan_digest = proof.value.digest,
+        reward_catalog_bound = authority ~= nil
+            and authority.reward_catalog ~= nil,
     })
 end
 
@@ -200,12 +223,17 @@ function Rules:grant_experience(state, amount)
     return result_ok(planned.value.after_state)
 end
 
--- The config composition boundary binds the canonical catalog once. This
+-- The config composition boundary binds the canonical catalogs once. This
 -- read-only pure-rules object is an internal dependency of future repository,
 -- receipt, reward, and save-aware use cases; it is not a complete write service.
-function CharacterRules.bind(catalog)
+-- reward_catalog is optional: when present, experience plans must resolve every
+-- level reward_ref against the sealed RewardCatalog and reject CHARACTER_XP leaves.
+function CharacterRules.bind(catalog, reward_catalog)
     if not is_catalog_authority(catalog) then
         return invalid_authority('CATALOG_AUTHORITY_REQUIRED')
+    end
+    if reward_catalog ~= nil and not is_reward_catalog_authority(reward_catalog) then
+        return invalid_authority('REWARD_CATALOG_AUTHORITY_REQUIRED')
     end
     local rules = set_metatable({}, Rules)
     STATES[rules] = {
@@ -219,6 +247,7 @@ function CharacterRules.bind(catalog)
                 talent_ids
             )
         end,
+        reward_catalog = reward_catalog,
     }
     return result_ok(rules)
 end
