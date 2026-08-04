@@ -7,6 +7,7 @@ local SCHEMA = 'CharacterDefinition'
 local FIELDS = {
     id = true,
     schema_version = true,
+    definition_version = true,
     display_name_key = true,
     description_key = true,
     role = true,
@@ -68,6 +69,7 @@ function CharacterDefinition.validate(value)
     err = Validation.first(
         Validation.content_id(SCHEMA, 'id', value.id, 'char_'),
         Validation.integer(SCHEMA, 'schema_version', value.schema_version, 1),
+        Validation.integer(SCHEMA, 'definition_version', value.definition_version, 1),
         Validation.non_empty_string(SCHEMA, 'display_name_key', value.display_name_key),
         Validation.non_empty_string(SCHEMA, 'description_key', value.description_key),
         Validation.enum(SCHEMA, 'role', value.role, ROLES),
@@ -116,6 +118,7 @@ function CharacterDefinition.validate(value)
     return Result.ok({
         id = value.id,
         schema_version = value.schema_version,
+        definition_version = value.definition_version,
         display_name_key = value.display_name_key,
         description_key = value.description_key,
         role = value.role,

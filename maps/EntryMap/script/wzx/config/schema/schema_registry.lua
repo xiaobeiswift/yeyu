@@ -1,5 +1,6 @@
 local Result = require 'wzx.domain.common.result'
 local ErrorCodes = require 'wzx.domain.common.error_codes'
+local Ordered = require 'wzx.domain.common.ordered'
 local RuntimeId = require 'wzx.domain.common.runtime_id'
 
 local SchemaRegistry = {}
@@ -274,7 +275,7 @@ function Registry:list()
     for entry_id in pairs(state.entries) do
         ids[#ids + 1] = entry_id
     end
-    table.sort(ids)
+    table.sort(ids, Ordered.bytewise_string_less)
 
     local entries = {}
     local index

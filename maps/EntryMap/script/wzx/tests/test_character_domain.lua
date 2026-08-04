@@ -31,6 +31,7 @@ local function character_definition()
     return {
         id = 'char_hero',
         schema_version = 1,
+        definition_version = 1,
         display_name_key = 'character.hero.name',
         description_key = 'character.hero.description',
         role = 'PROTAGONIST',

@@ -14,5 +14,6 @@ return {
     'wzx.tests.test_foundation_contracts',
     'wzx.tests.test_config_registries',
     'wzx.tests.test_character_domain',
+    'wzx.tests.test_character_aggregate_and_catalog',
     'wzx.tests.test_bootstrap',
 }

@@ -138,10 +138,12 @@ return {
         assert.equal(registry:get('zeta').value.nested.value, 7)
 
         assert.equal(registry:register({ id = 'alpha' }).ok, true)
+        assert.equal(registry:register({ id = 'Alpha' }).ok, true)
         local listed = registry:list()
         assert.equal(listed.ok, true)
-        assert.equal(listed.value[1].id, 'alpha')
-        assert.equal(listed.value[2].id, 'zeta')
+        assert.equal(listed.value[1].id, 'Alpha')
+        assert.equal(listed.value[2].id, 'alpha')
+        assert.equal(listed.value[3].id, 'zeta')
         assert.error_code(registry:register({ id = 'zeta' }), 'REGISTRY_DUPLICATE')
 
         assert.equal(registry:seal().ok, true)
