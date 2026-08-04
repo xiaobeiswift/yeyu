@@ -3,6 +3,7 @@
 
 local Result = require 'wzx.domain.common.result'
 local EncounterRun = require 'wzx.domain.encounter.encounter_run'
+local EncounterCompletedEvent = require 'wzx.domain.encounter.encounter_completed_event'
 local EncounterErrorCodes = require 'wzx.domain.encounter.error_codes'
 
 local EncounterService = {}
@@ -289,11 +290,30 @@ function Service:settle(run, input)
     if run.state == EncounterRun.PHASE.COMPLETED
         and run.settlement_receipt_id == settlement_receipt_id
     then
+        local completion_event = run.completion_event
+        if completion_event == nil and run.settlement_plan ~= nil then
+            local completion_count = nil
+            if run.progress_update ~= nil
+                and run.progress_update.row ~= nil
+            then
+                completion_count = run.progress_update.row.completion_count
+            end
+            local built = EncounterCompletedEvent.build(run, {
+                catalog = state.catalog,
+                completion_count = completion_count,
+            })
+            if not built.ok then
+                return built
+            end
+            completion_event = built.value
+            run.completion_event = completion_event
+        end
         return result_ok({
             state = run.state,
             plan = run.settlement_plan,
             reward = run.reward_grant,
             progress = run.progress_update,
+            completion_event = completion_event,
             idempotent = true,
         })
     end
@@ -368,11 +388,29 @@ function Service:settle(run, input)
     run.reward_grant = reward_result
     run.progress_update = progress_result
 
+    local completion_event = nil
+    if plan.is_victory then
+        local completion_count = nil
+        if progress_result.row ~= nil then
+            completion_count = progress_result.row.completion_count
+        end
+        local built = EncounterCompletedEvent.build(run, {
+            catalog = state.catalog,
+            completion_count = completion_count,
+        })
+        if not built.ok then
+            return built
+        end
+        completion_event = built.value
+        run.completion_event = completion_event
+    end
+
     return result_ok({
         state = completed.value.state,
         plan = plan,
         reward = reward_result,
         progress = progress_result,
+        completion_event = completion_event,
         idempotent = completed.value.idempotent == true,
         revision = completed.value.revision or run.revision,
     })
