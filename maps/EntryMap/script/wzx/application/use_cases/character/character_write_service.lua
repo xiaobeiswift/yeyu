@@ -1,6 +1,7 @@
 local CanonicalReceiptHashV1 = require 'wzx.domain.common.canonical_receipt_hash_v1'
 local CharacterReceiptCodec = require 'wzx.domain.character.character_receipt_codec'
 local CharacterRepository = require 'wzx.application.ports.character_repository'
+local CharacterSaveBridge = require 'wzx.application.use_cases.character.character_save_bridge'
 local Ordered = require 'wzx.domain.common.ordered'
 local Result = require 'wzx.domain.common.result'
 local RuntimeId = require 'wzx.domain.common.runtime_id'
@@ -329,7 +330,25 @@ local function query_proof_from_commit(commit_request)
     }
 end
 
-local function finalize_write(commit_request, completion)
+local function maybe_persist_save(self, player_save_scope, request_id, correlation_id)
+    local state = STATES[self]
+    if state == nil or state.save_bridge == nil then
+        return result_ok({ status = 'SKIPPED' })
+    end
+    return state.save_bridge:persist_player_characters({
+        player_save_scope = player_save_scope,
+        player_ref = player_save_scope,
+        request_id = request_id,
+        correlation_id = correlation_id,
+    })
+end
+
+local function finalize_write(
+    self,
+    commit_request,
+    completion,
+    player_save_scope
+)
     local pending = {
         query_proof = query_proof_from_commit(commit_request),
         operation_type = commit_request.operation_type,
@@ -346,9 +365,26 @@ local function finalize_write(commit_request, completion)
                 status = 'UNKNOWN',
                 pending = pending,
                 error = completion.error,
+                save = { status = 'SKIPPED' },
             })
         end
         return completion
+    end
+
+    local save_result = maybe_persist_save(
+        self,
+        player_save_scope,
+        commit_request.context.request_id,
+        commit_request.context.correlation_id
+    )
+    local save_payload
+    if not save_result.ok then
+        save_payload = {
+            status = 'FAILED',
+            error = save_result.error,
+        }
+    else
+        save_payload = save_result.value
     end
 
     return result_ok({
@@ -358,6 +394,7 @@ local function finalize_write(commit_request, completion)
         result = completion.value.result,
         character_save_revision = completion.value.character_save_revision,
         receipt_save_revision = completion.value.receipt_save_revision,
+        save = save_payload,
     })
 end
 
@@ -599,7 +636,12 @@ function Service:create_owned(input, invoke)
         'commit_character_transaction',
         commit_request
     )
-    return finalize_write(commit_request, committed)
+    return finalize_write(
+        self,
+        commit_request,
+        committed,
+        identity.player_save_scope
+    )
 end
 
 local function build_experience_commit(identity, planned, reason, settlement, save_revision)
@@ -808,7 +850,12 @@ function Service:grant_experience(input, invoke)
         'commit_character_transaction',
         commit_request.value
     )
-    local finalized = finalize_write(commit_request.value, committed)
+    local finalized = finalize_write(
+        self,
+        commit_request.value,
+        committed,
+        identity.player_save_scope
+    )
     if not finalized.ok then
         return finalized
     end
@@ -923,7 +970,105 @@ function Service:rename_protagonist(input, invoke)
         'commit_character_transaction',
         commit_request.value
     )
-    return finalize_write(commit_request.value, committed)
+    return finalize_write(
+        self,
+        commit_request.value,
+        committed,
+        identity.player_save_scope
+    )
+end
+
+function Service:build_combatant_snapshot(input, invoke)
+    if type_value(input) ~= 'table' or get_metatable(input) ~= nil then
+        return invalid_argument('PLAIN_TABLE_REQUIRED', { field = 'input' })
+    end
+    local scope = validate_component(
+        raw_get(input, 'player_save_scope'),
+        'player_save_scope'
+    )
+    if not scope.ok then
+        return invalid_argument('PLAYER_SAVE_SCOPE_INVALID', {
+            field = 'player_save_scope',
+        })
+    end
+    local character_id = validate_content(
+        raw_get(input, 'character_id'),
+        'char_',
+        'character_id'
+    )
+    if not character_id.ok then
+        return invalid_argument('CHARACTER_ID_INVALID', {
+            field = 'character_id',
+        })
+    end
+    local request_id = validate_component(
+        raw_get(input, 'request_id') or 'request_character_build',
+        'request_id'
+    )
+    if not request_id.ok then
+        return invalid_argument('REQUEST_ID_INVALID', { field = 'request_id' })
+    end
+    local correlation_id = validate_component(
+        raw_get(input, 'correlation_id') or request_id.value,
+        'correlation_id'
+    )
+    if not correlation_id.ok then
+        return invalid_argument('CORRELATION_ID_INVALID', {
+            field = 'correlation_id',
+        })
+    end
+
+    local state = STATES[self]
+    if state == nil then
+        return invalid_argument('SERVICE_AUTHORITY_REQUIRED')
+    end
+
+    local identity = {
+        player_save_scope = scope.value,
+        character_id = character_id.value,
+        request_id = request_id.value,
+        correlation_id = correlation_id.value,
+        attempt = 1,
+    }
+    local loaded = load_character(self, identity, invoke)
+    if not loaded.ok then
+        return loaded
+    end
+    if loaded.value.status ~= 'FOUND' then
+        return fail('CHARACTER_NOT_OWNED', 'CHARACTER_NOT_FOUND', {
+            character_id = character_id.value,
+            player_save_scope = scope.value,
+            status = loaded.value.status,
+        }, false)
+    end
+
+    local built = state.rules:build_combatant_snapshot(
+        loaded.value.state,
+        {
+            rules_version = raw_get(input, 'rules_version'),
+            side = raw_get(input, 'side'),
+            position_index = raw_get(input, 'position_index'),
+            actor_id = raw_get(input, 'actor_id'),
+            ai_profile_id = raw_get(input, 'ai_profile_id'),
+            view_context = raw_get(input, 'view_context'),
+            equipment_contributions = raw_get(input, 'equipment_contributions'),
+            martial_contributions = raw_get(input, 'martial_contributions'),
+            progression_contributions = raw_get(
+                input,
+                'progression_contributions'
+            ),
+            equipment_snapshot = raw_get(input, 'equipment_snapshot'),
+            martial_snapshot = raw_get(input, 'martial_snapshot'),
+            progression_snapshot = raw_get(input, 'progression_snapshot'),
+            martial_loadout = raw_get(input, 'martial_loadout'),
+            initial_status_ids = raw_get(input, 'initial_status_ids'),
+        }
+    )
+    if not built.ok then
+        return built
+    end
+    built.value.character_save_revision = loaded.value.character_save_revision
+    return result_ok(built.value)
 end
 
 function Service:get_character_detail(input, invoke)
@@ -1229,6 +1374,7 @@ function CharacterWriteService.bind(options)
         or type_value(rules.plan_experience_grant) ~= 'function'
         or type_value(rules.plan_rename) ~= 'function'
         or type_value(rules.get_detail) ~= 'function'
+        or type_value(rules.build_combatant_snapshot) ~= 'function'
     then
         return invalid_argument('CHARACTER_RULES_REQUIRED', {
             field = 'rules',
@@ -1248,10 +1394,20 @@ function CharacterWriteService.bind(options)
         end
     end
 
+    local save_bridge = raw_get(options, 'save_bridge')
+    if save_bridge ~= nil
+        and not CharacterSaveBridge.is_authority(save_bridge)
+    then
+        return invalid_argument('SAVE_BRIDGE_AUTHORITY_REQUIRED', {
+            field = 'save_bridge',
+        })
+    end
+
     local service = set_metatable({}, Service)
     STATES[service] = {
         rules = rules,
         repository = repository,
+        save_bridge = save_bridge,
     }
     return result_ok(service)
 end

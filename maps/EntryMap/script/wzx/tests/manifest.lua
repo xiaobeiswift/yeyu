@@ -24,5 +24,6 @@ return {
     'wzx.tests.test_character_write_use_cases',
     'wzx.tests.test_character_query_and_rename',
     'wzx.tests.test_save_coordinator',
+    'wzx.tests.test_character_build_and_save_bridge',
     'wzx.tests.test_bootstrap',
 }
