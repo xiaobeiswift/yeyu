@@ -3,6 +3,8 @@
 -- surrogate code points, or values above U+10FFFF are accepted.
 
 local Utf8Text = {}
+local math_floor = math.floor
+local string_byte = string.byte
 
 local function byte_in_range(value, minimum, maximum)
     return value ~= nil and value >= minimum and value <= maximum
@@ -16,7 +18,7 @@ local function invalid(reason, byte_index)
     return nil, reason, byte_index
 end
 
-function Utf8Text.codepoint_count(value)
+local function codepoint_count(value)
     if type(value) ~= 'string' then
         return invalid('STRING_REQUIRED', 1)
     end
@@ -25,7 +27,7 @@ function Utf8Text.codepoint_count(value)
     local byte_index = 1
     local codepoint_count = 0
     while byte_index <= byte_length do
-        local first = value:byte(byte_index)
+        local first = string_byte(value, byte_index)
         local sequence_length
         local second_minimum = 0x80
         local second_maximum = 0xBF
@@ -60,7 +62,7 @@ function Utf8Text.codepoint_count(value)
             return invalid('TRUNCATED_SEQUENCE', byte_index)
         end
         if sequence_length > 1 then
-            local second = value:byte(byte_index + 1)
+            local second = string_byte(value, byte_index + 1)
             if not byte_in_range(second, second_minimum, second_maximum) then
                 return invalid('INVALID_SECOND_BYTE', byte_index + 1)
             end
@@ -68,7 +70,7 @@ function Utf8Text.codepoint_count(value)
 
         local offset
         for offset = 2, sequence_length - 1 do
-            if not continuation(value:byte(byte_index + offset)) then
+            if not continuation(string_byte(value, byte_index + offset)) then
                 return invalid('INVALID_CONTINUATION_BYTE', byte_index + offset)
             end
         end
@@ -79,15 +81,16 @@ function Utf8Text.codepoint_count(value)
 
     return codepoint_count
 end
+Utf8Text.codepoint_count = codepoint_count
 
 function Utf8Text.is_valid(value, maximum_codepoints)
-    local count, reason, byte_index = Utf8Text.codepoint_count(value)
+    local count, reason, byte_index = codepoint_count(value)
     if count == nil then
         return false, reason, byte_index
     end
     if maximum_codepoints ~= nil then
         if type(maximum_codepoints) ~= 'number'
-            or maximum_codepoints ~= math.floor(maximum_codepoints)
+            or maximum_codepoints ~= math_floor(maximum_codepoints)
             or maximum_codepoints < 0
         then
             return false, 'MAXIMUM_CODEPOINTS_INVALID'

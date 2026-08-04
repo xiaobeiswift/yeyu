@@ -3,6 +3,15 @@ local Ordered = require "wzx.domain.common.ordered"
 local TableShape = require "wzx.domain.common.table_shape"
 
 local PortContract = {}
+local bytewise_string_less = Ordered.bytewise_string_less
+local is_dense_array = Ordered.is_dense_array
+local request_context_is_finite_number = RequestContext.is_finite_number
+local request_context_is_integer = RequestContext.is_integer
+local request_context_validate = RequestContext.validate
+local validate_serializable = TableShape.validate_serializable
+local math_floor = math.floor
+local raw_next = next
+local string_match = string.match
 local MAX_SAFE_INTEGER = 9007199254740991
 local MAX_RESULT_DEPTH = 8
 local MAX_STRING_BYTES = 1024
@@ -11,6 +20,8 @@ local MAX_PAYLOAD_NODES = 4096
 local MAX_TOTAL_STRING_BYTES = 262144
 local MAX_KEY_BYTES = 256
 local MAX_VALUE_STRING_BYTES = 65536
+local RESULT_PHASE_ADMISSION = "ADMISSION"
+local RESULT_PHASE_COMPLETION = "COMPLETION"
 local SPEC_STATES = setmetatable({}, { __mode = "k" })
 local COMMON_ERROR_CODES = {
     FAKE_FINGERPRINT_FAILED = true,
@@ -43,7 +54,7 @@ local function copy_details(details)
     local value
 
     if type(details) == "table" then
-        for key, value in pairs(details) do
+        for key, value in raw_next, details do
             copied[key] = value
         end
     end
@@ -75,7 +86,7 @@ end
 
 local function is_safe_positive_integer(value)
     return is_finite_number(value)
-        and value == math.floor(value)
+        and value == math_floor(value)
         and value >= 1
         and value <= MAX_SAFE_INTEGER
 end
@@ -133,7 +144,7 @@ local function classify_payload_table(value, path, state)
     local has_numeric_key = false
     local has_string_key = false
 
-    for key in next, value do
+    for key in raw_next, value do
         budget_error = touch_node(state, path .. ".<key>")
         if budget_error then
             return nil, budget_error
@@ -196,10 +207,10 @@ end
 local function sorted_payload_keys(value)
     local keys = {}
     local key
-    for key in next, value do
+    for key in raw_next, value do
         keys[#keys + 1] = key
     end
-    table.sort(keys)
+    table.sort(keys, bytewise_string_less)
     return keys
 end
 
@@ -366,20 +377,28 @@ function PortContract.error(code, details, retryable)
 end
 
 function PortContract.is_result(value)
-    if type(value) ~= "table" or type(value.ok) ~= "boolean" then
+    local ok_value
+    local error_value
+    if type(value) ~= "table"
+        or getmetatable(value) ~= nil
+        or type(rawget(value, "ok")) ~= "boolean"
+    then
         return false
     end
 
-    if value.ok then
-        return value.error == nil
+    ok_value = rawget(value, "ok")
+    error_value = rawget(value, "error")
+    if ok_value then
+        return error_value == nil
     end
 
-    return type(value.error) == "table"
-        and type(value.error.code) == "string"
-        and value.error.code ~= ""
-        and type(value.error.message_key) == "string"
-        and value.error.message_key ~= ""
-        and type(value.error.retryable) == "boolean"
+    return type(error_value) == "table"
+        and getmetatable(error_value) == nil
+        and type(rawget(error_value, "code")) == "string"
+        and rawget(error_value, "code") ~= ""
+        and type(rawget(error_value, "message_key")) == "string"
+        and rawget(error_value, "message_key") ~= ""
+        and type(rawget(error_value, "retryable")) == "boolean"
 end
 
 function PortContract.invalid_request(field_name, reason, details)
@@ -424,10 +443,10 @@ function PortContract.check_result_fields(value, required_fields, optional_field
     if type(value) ~= "table" then
         return PortContract.invalid_result("value", "TABLE_REQUIRED")
     end
-    for field_name in pairs(optional) do
+    for field_name in raw_next, optional do
         allowed[field_name] = true
     end
-    for field_name in pairs(value) do
+    for field_name in raw_next, value do
         if type(field_name) ~= "string" or not allowed[field_name] then
             return PortContract.invalid_result(
                 tostring(field_name),
@@ -476,7 +495,7 @@ function PortContract.check_result_integer(
     if value == nil and optional then
         return nil
     end
-    if not RequestContext.is_integer(value)
+    if not request_context_is_integer(value)
         or value < -MAX_SAFE_INTEGER
         or value > MAX_SAFE_INTEGER
     then
@@ -577,7 +596,7 @@ function PortContract.check_result_table(container, field_name, optional)
     if type(value) ~= "table" then
         return PortContract.invalid_result(field_name, "TABLE_REQUIRED")
     end
-    serializable = TableShape.validate_serializable(
+    serializable = validate_serializable(
         value,
         MAX_RESULT_DEPTH,
         "$.value." .. field_name
@@ -606,7 +625,7 @@ function PortContract.check_result_list(
     if type(value) ~= "table" then
         return PortContract.invalid_result(field_name, "LIST_REQUIRED")
     end
-    if not Ordered.is_dense_array(value) then
+    if not is_dense_array(value) then
         return PortContract.invalid_result(field_name, "DENSE_LIST_REQUIRED")
     end
     length = #value
@@ -649,7 +668,7 @@ function PortContract.check_integer(container, field_name, minimum, maximum, opt
         return nil
     end
 
-    if not RequestContext.is_integer(value) then
+    if not request_context_is_integer(value) then
         return PortContract.invalid_request(field_name, "INTEGER_REQUIRED")
     end
 
@@ -677,7 +696,7 @@ function PortContract.check_number(container, field_name, minimum, maximum, opti
         return nil
     end
 
-    if not RequestContext.is_finite_number(value) then
+    if not request_context_is_finite_number(value) then
         return PortContract.invalid_request(field_name, "FINITE_NUMBER_REQUIRED")
     end
 
@@ -709,7 +728,7 @@ function PortContract.check_table(container, field_name, optional)
         return PortContract.invalid_request(field_name, "TABLE_REQUIRED")
     end
 
-    local serializable = TableShape.validate_serializable(
+    local serializable = validate_serializable(
         value,
         8,
         "$." .. field_name
@@ -735,7 +754,7 @@ function PortContract.check_list(container, field_name, allow_empty, optional)
         return PortContract.invalid_request(field_name, "LIST_REQUIRED")
     end
 
-    if not Ordered.is_dense_array(value) then
+    if not is_dense_array(value) then
         return PortContract.invalid_request(field_name, "DENSE_LIST_REQUIRED")
     end
     length = #value
@@ -811,13 +830,13 @@ local function validate_request_snapshot(spec, operation_name, request)
     end
 
     local field
-    for field in pairs(request) do
+    for field in raw_next, request do
         if type(field) ~= "string" or not operation.allowed_request_fields[field] then
             return PortContract.invalid_request(tostring(field), "UNKNOWN_FIELD")
         end
     end
 
-    context_result = RequestContext.validate(request.context, {
+    context_result = request_context_validate(request.context, {
         require_idempotency = operation.requires_idempotency == true,
     })
     if not context_result.ok then
@@ -895,7 +914,7 @@ local function invalid_result_with_context(spec, operation, invalid)
         and type(invalid.error) == "table"
         and type(invalid.error.details) == "table"
     then
-        for key, value in pairs(invalid.error.details) do
+        for key, value in raw_next, invalid.error.details do
             details[key] = value
         end
     end
@@ -909,7 +928,7 @@ local function validate_error_result(operation, result)
     local key
     local allowed
 
-    for key in pairs(result) do
+    for key in raw_next, result do
         if key ~= "ok" and key ~= "error" then
             return PortContract.invalid_result(
                 tostring(key),
@@ -920,7 +939,7 @@ local function validate_error_result(operation, result)
     if type(error_value) ~= "table" then
         return PortContract.invalid_result("error", "ERROR_TABLE_REQUIRED")
     end
-    for key in pairs(error_value) do
+    for key in raw_next, error_value do
         if key ~= "code"
             and key ~= "message_key"
             and key ~= "retryable"
@@ -935,7 +954,7 @@ local function validate_error_result(operation, result)
     if type(error_value.code) ~= "string"
         or #error_value.code < 1
         or #error_value.code > 64
-        or not string.match(error_value.code, "^[A-Z][A-Z0-9_]*$")
+        or not string_match(error_value.code, "^[A-Z][A-Z0-9_]*$")
     then
         return PortContract.invalid_result(
             "error.code",
@@ -952,11 +971,17 @@ local function validate_error_result(operation, result)
     if type(error_value.message_key) ~= "string"
         or #error_value.message_key < 7
         or #error_value.message_key > MAX_STRING_BYTES
-        or not string.match(error_value.message_key, "^error%.[a-z0-9_.]+$")
+        or not string_match(error_value.message_key, "^error%.[a-z0-9_.]+$")
     then
         return PortContract.invalid_result(
             "error.message_key",
             "STABLE_MESSAGE_KEY_REQUIRED"
+        )
+    end
+    if error_value.message_key ~= "error." .. string.lower(error_value.code) then
+        return PortContract.invalid_result(
+            "error.message_key",
+            "MESSAGE_KEY_CODE_MISMATCH"
         )
     end
     if type(error_value.retryable) ~= "boolean" then
@@ -992,7 +1017,13 @@ local function validate_error_result(operation, result)
     return nil
 end
 
-local function validate_result_snapshot(spec, operation_name, result, request)
+local function validate_result_snapshot(
+    spec,
+    operation_name,
+    result,
+    request,
+    phase
+)
     local operation = find_operation(spec, operation_name)
     local serializable
     local invalid
@@ -1013,7 +1044,7 @@ local function validate_result_snapshot(spec, operation_name, result, request)
             PortContract.invalid_result(nil, "RESULT_ENVELOPE_INVALID")
         )
     end
-    serializable = TableShape.validate_serializable(
+    serializable = validate_serializable(
         result,
         MAX_RESULT_DEPTH,
         "$.result"
@@ -1033,10 +1064,42 @@ local function validate_result_snapshot(spec, operation_name, result, request)
         if invalid then
             return false, invalid_result_with_context(spec, operation, invalid)
         end
+        if operation.validate_error ~= nil then
+            validator_ok, success_validation = pcall(
+                operation.validate_error,
+                result.error,
+                request,
+                phase
+            )
+            if not validator_ok then
+                return false, invalid_result_with_context(
+                    spec,
+                    operation,
+                    PortContract.invalid_result(nil, "ERROR_VALIDATOR_RAISED")
+                )
+            end
+            if not PortContract.is_result(success_validation) then
+                return false, invalid_result_with_context(
+                    spec,
+                    operation,
+                    PortContract.invalid_result(
+                        nil,
+                        "ERROR_VALIDATOR_MUST_RETURN_RESULT"
+                    )
+                )
+            end
+            if not success_validation.ok then
+                return false, invalid_result_with_context(
+                    spec,
+                    operation,
+                    success_validation
+                )
+            end
+        end
         return true, result
     end
 
-    for key in pairs(result) do
+    for key in raw_next, result do
         if key ~= "ok" and key ~= "value" then
             return false, invalid_result_with_context(
                 spec,
@@ -1092,7 +1155,8 @@ function PortContract.sanitize_completion_result(
     spec,
     operation_name,
     result,
-    request
+    request,
+    phase
 )
     local operation = find_operation(spec, operation_name)
     local snapshot
@@ -1102,6 +1166,14 @@ function PortContract.sanitize_completion_result(
     local normalized
     local details
 
+    phase = phase or RESULT_PHASE_COMPLETION
+    if phase ~= RESULT_PHASE_ADMISSION and phase ~= RESULT_PHASE_COMPLETION then
+        return PortContract.error("PORT_CONTRACT_INVALID", {
+            port = spec_name(spec),
+            operation = operation_name,
+            reason = "RESULT_PHASE_INVALID",
+        }, false)
+    end
     if not operation then
         return PortContract.error("PORT_OPERATION_UNKNOWN", {
             port = spec_name(spec),
@@ -1137,7 +1209,8 @@ function PortContract.sanitize_completion_result(
         spec,
         operation_name,
         snapshot.value,
-        request_binding
+        request_binding,
+        phase
     )
     if not valid then
         return normalized
@@ -1145,12 +1218,13 @@ function PortContract.sanitize_completion_result(
     return PortContract.ok(snapshot.value)
 end
 
-function PortContract.validate_result(spec, operation_name, result, request)
+function PortContract.validate_result(spec, operation_name, result, request, phase)
     local sanitized = PortContract.sanitize_completion_result(
         spec,
         operation_name,
         result,
-        request
+        request,
+        phase
     )
     if not sanitized.ok then
         return sanitized
@@ -1227,26 +1301,25 @@ function PortContract.guard_implementation(spec, implementation)
             local key
 
             local function adapter_failure(code, reason, details)
-                details = copy_details(details)
-                details.port = spec_state.name
-                details.operation = bound_operation.name
-                details.reason = reason
                 if bound_operation.mutating then
-                    details.adapter_error_code = code
-                    details.recovery = "QUERY_OR_RECONCILE"
+                    local safe_details = {
+                        reason = "INTERNAL_ERROR_IS_NOT_PLATFORM_CONCLUSION",
+                        cause_code = code,
+                        recovery = "QUERY_OR_RECONCILE",
+                    }
                     if type(binding_request) == "table"
                         and type(binding_request.context) == "table"
                     then
-                        details.request_key =
+                        safe_details.request_key =
                             binding_request.context.idempotency_key
                     end
                     return PortContract.error(
                         "PLATFORM_RESULT_UNKNOWN",
-                        details,
+                        safe_details,
                         false
                     )
                 end
-                return PortContract.error(code, details, false)
+                return PortContract.error(code, nil, false)
             end
 
             if not callback_result.ok then
@@ -1334,7 +1407,8 @@ function PortContract.guard_implementation(spec, implementation)
                     spec,
                     bound_operation.name,
                     admission,
-                    binding_request
+                    binding_request,
+                    RESULT_PHASE_ADMISSION
                 )
                 if not sanitized_error.ok then
                     return adapter_failure(
@@ -1345,7 +1419,7 @@ function PortContract.guard_implementation(spec, implementation)
                 end
                 return sanitized_error.value
             end
-            for key in pairs(admission) do
+            for key in raw_next, admission do
                 if key ~= "ok" and key ~= "value" then
                     return adapter_failure(
                         "PORT_ADAPTER_RETURN_INVALID",
@@ -1362,7 +1436,7 @@ function PortContract.guard_implementation(spec, implementation)
                     "ACCEPTED_TRUE_REQUIRED"
                 )
             end
-            for key in pairs(admission.value) do
+            for key in raw_next, admission.value do
                 if key ~= "accepted" then
                     return adapter_failure(
                         "PORT_ADAPTER_RETURN_INVALID",
@@ -1480,12 +1554,23 @@ function PortContract.completion_gate(
     local gate
     local state
     gate, state = PortContract.once(complete, on_suppressed, function(result)
-        local sanitized = PortContract.sanitize_completion_result(
+        local normalized_ok
+        local sanitized
+        normalized_ok, sanitized = pcall(
+            PortContract.sanitize_completion_result,
             spec,
             operation_name,
             result,
-            request_binding
+            request_binding,
+            RESULT_PHASE_COMPLETION
         )
+        if not normalized_ok then
+            sanitized = PortContract.error("PORT_RESULT_INVALID", {
+                port = spec_name(spec),
+                operation = operation_name,
+                reason = "COMPLETION_NORMALIZER_RAISED",
+            }, false)
+        end
         if sanitized.ok then
             if operation.requires_idempotency then
                 local expected_request_key = request_binding.context
@@ -1503,13 +1588,10 @@ function PortContract.completion_gate(
                 end
                 if actual_request_key ~= expected_request_key then
                     return PortContract.error("PLATFORM_RESULT_UNKNOWN", {
-                        port = spec_name(spec),
-                        operation = operation_name,
                         reason = "COMPLETION_REQUEST_KEY_MISMATCH",
                         recovery = "QUERY_OR_RECONCILE",
                         cause_code = "PORT_RESULT_INVALID",
                         request_key = expected_request_key,
-                        actual_request_key = actual_request_key,
                     }, false)
                 end
             end
@@ -1519,8 +1601,6 @@ function PortContract.completion_gate(
                     or sanitized.value.error.code == "PLATFORM_RATE_LIMITED")
             then
                 return PortContract.error("PLATFORM_RESULT_UNKNOWN", {
-                    port = spec_name(spec),
-                    operation = operation_name,
                     reason = "ACCEPTED_MUTATION_HAS_AMBIGUOUS_PLATFORM_ERROR",
                     recovery = "QUERY_OR_RECONCILE",
                     cause_code = sanitized.value.error.code,
@@ -1529,18 +1609,16 @@ function PortContract.completion_gate(
             end
             if operation.mutating
                 and sanitized.value.ok == false
-                and (string.match(
+                and (string_match(
                     sanitized.value.error.code,
                     "^PORT_"
                 ) ~= nil
-                    or string.match(
+                    or string_match(
                         sanitized.value.error.code,
                         "^FAKE_"
                     ) ~= nil)
             then
                 return PortContract.error("PLATFORM_RESULT_UNKNOWN", {
-                    port = spec_name(spec),
-                    operation = operation_name,
                     reason = "INTERNAL_ERROR_IS_NOT_PLATFORM_CONCLUSION",
                     recovery = "QUERY_OR_RECONCILE",
                     cause_code = sanitized.value.error.code,
@@ -1551,18 +1629,15 @@ function PortContract.completion_gate(
         end
         if operation.mutating then
             return PortContract.error("PLATFORM_RESULT_UNKNOWN", {
-                port = spec_name(spec),
-                operation = operation_name,
                 reason = "CALLBACK_RESULT_CONTRACT_INVALID",
                 recovery = "QUERY_OR_RECONCILE",
                 cause_code = sanitized.error
                     and sanitized.error.code
                     or "PORT_RESULT_INVALID",
-                cause = sanitized.error,
                 request_key = request_binding.context.idempotency_key,
             }, false)
         end
-        return sanitized
+        return PortContract.error("PORT_RESULT_INVALID", nil, false)
     end)
     return gate, state, nil
 end
@@ -1580,7 +1655,7 @@ local function copy_string_set(values)
     local copied = {}
     local key
     local value
-    for key, value in pairs(values) do
+    for key, value in raw_next, values do
         copied[key] = value
     end
     return copied
@@ -1613,7 +1688,7 @@ local function public_operation_map(state)
     local copied = {}
     local name
     local operation
-    for name, operation in pairs(state.operation_by_name) do
+    for name, operation in raw_next, state.operation_by_name do
         copied[name] = public_operation(operation)
     end
     return copied
@@ -1665,20 +1740,28 @@ function SPEC_METHODS:guard_implementation(implementation)
     return PortContract.guard_implementation(self, implementation)
 end
 
-function SPEC_METHODS:validate_result(operation_name, result, request)
-    return PortContract.validate_result(self, operation_name, result, request)
+function SPEC_METHODS:validate_result(operation_name, result, request, phase)
+    return PortContract.validate_result(
+        self,
+        operation_name,
+        result,
+        request,
+        phase
+    )
 end
 
 function SPEC_METHODS:sanitize_completion_result(
     operation_name,
     result,
-    request
+    request,
+    phase
 )
     return PortContract.sanitize_completion_result(
         self,
         operation_name,
         result,
-        request
+        request,
+        phase
     )
 end
 
@@ -1717,10 +1800,10 @@ function PortContract.define(definition)
         or type(definition.name) ~= "string"
         or #definition.name < 1
         or #definition.name > 64
-        or not string.match(definition.name, "^[A-Za-z][A-Za-z0-9_]*$")
+        or not string_match(definition.name, "^[A-Za-z][A-Za-z0-9_]*$")
         or type(definition.operations) ~= "table"
-        or not Ordered.is_dense_array(definition.operations)
-        or not RequestContext.is_integer(contract_version)
+        or not is_dense_array(definition.operations)
+        or not request_context_is_integer(contract_version)
         or contract_version < 1
         or contract_version > MAX_SAFE_INTEGER
     then
@@ -1733,7 +1816,7 @@ function PortContract.define(definition)
             or type(source_operation.name) ~= "string"
             or #source_operation.name < 1
             or #source_operation.name > 64
-            or not string.match(
+            or not string_match(
                 source_operation.name,
                 "^[a-z][a-z0-9_]*$"
             )
@@ -1755,6 +1838,7 @@ function PortContract.define(definition)
             requires_idempotency = source_operation.requires_idempotency == true,
             validate_request = source_operation.validate_request,
             validate_success = source_operation.validate_success,
+            validate_error = source_operation.validate_error,
             request_fields = {},
             allowed_request_fields = { context = true },
             error_codes = {},
@@ -1776,8 +1860,18 @@ function PortContract.define(definition)
                     .. definition.name
             )
         end
+        if operation.validate_error ~= nil
+            and type(operation.validate_error) ~= "function"
+        then
+            error(
+                "validate_error must be a function for operation "
+                    .. source_operation.name
+                    .. " in port contract "
+                    .. definition.name
+            )
+        end
         if type(source_operation.request_fields) ~= "table"
-            or not Ordered.is_dense_array(source_operation.request_fields)
+            or not is_dense_array(source_operation.request_fields)
         then
             error(
                 "request_fields are required for operation "
@@ -1792,7 +1886,7 @@ function PortContract.define(definition)
             if type(field_name) ~= "string"
                 or #field_name < 1
                 or #field_name > 64
-                or not string.match(field_name, "^[a-z][a-z0-9_]*$")
+                or not string_match(field_name, "^[a-z][a-z0-9_]*$")
                 or field_name == "context"
                 or operation.allowed_request_fields[field_name]
             then
@@ -1808,7 +1902,7 @@ function PortContract.define(definition)
         end
         if source_operation.error_codes ~= nil
             and (type(source_operation.error_codes) ~= "table"
-                or not Ordered.is_dense_array(source_operation.error_codes))
+                or not is_dense_array(source_operation.error_codes))
         then
             error(
                 "error_codes must be a table for operation "
@@ -1825,7 +1919,7 @@ function PortContract.define(definition)
             if type(error_code) ~= "string"
                 or #error_code < 1
                 or #error_code > 64
-                or not string.match(error_code, "^[A-Z][A-Z0-9_]*$")
+                or not string_match(error_code, "^[A-Z][A-Z0-9_]*$")
                 or operation.allowed_error_codes[error_code]
             then
                 error(
@@ -1893,4 +1987,10 @@ function PortContract.inspect_payload_budget(value, root_path)
     })
 end
 
-return PortContract
+return setmetatable({}, {
+    __index = PortContract,
+    __newindex = function()
+        error("port contract module is read-only", 2)
+    end,
+    __metatable = false,
+})

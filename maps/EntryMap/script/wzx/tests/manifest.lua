@@ -15,5 +15,10 @@ return {
     'wzx.tests.test_config_registries',
     'wzx.tests.test_character_domain',
     'wzx.tests.test_character_aggregate_and_catalog',
+    'wzx.tests.test_character_section_registrar',
+    'wzx.tests.test_character_save_codec',
+    'wzx.tests.test_character_receipt_codec',
+    'wzx.tests.test_character_repository_port',
+    'wzx.tests.test_fake_character_repository',
     'wzx.tests.test_bootstrap',
 }

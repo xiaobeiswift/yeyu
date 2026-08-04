@@ -396,6 +396,8 @@ function CharacterAggregate.validate(state, definition_facts, curve)
     return Result.ok(copy_state(state))
 end
 
+local validate_aggregate = CharacterAggregate.validate
+
 function CharacterAggregate.create_owned(definition_facts, created_receipt_id)
     local definition_result = validate_definition_facts(definition_facts)
     if not definition_result.ok then
@@ -437,7 +439,7 @@ function CharacterAggregate.create_owned(definition_facts, created_receipt_id)
 end
 
 function CharacterAggregate.grant_experience(state, definition_facts, curve, amount)
-    local validated = CharacterAggregate.validate(state, definition_facts, curve)
+    local validated = validate_aggregate(state, definition_facts, curve)
     if not validated.ok then
         return validated
     end

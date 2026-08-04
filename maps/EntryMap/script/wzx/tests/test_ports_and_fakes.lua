@@ -801,6 +801,11 @@ return {
     case('port descriptors are defensive copies and contracts are read-only', function()
         local SaveStore = require 'wzx.application.ports.save_store'
         assert.throws(function()
+            PortContract.invalid_request = function()
+                return PortContract.ok(true)
+            end
+        end, 'port contract module is read-only')
+        assert.throws(function()
             SaveStore.name = 'ForgedStore'
         end, 'port contract is read-only')
         assert.throws(function()
@@ -885,6 +890,63 @@ return {
             correlation_id = 'correlation',
             attempt = 0,
         }, {}), 'PORT_REQUEST_CONTEXT_INVALID')
+
+        local metamethod_calls = 0
+        local hostile_context = setmetatable({}, {
+            __index = function()
+                metamethod_calls = metamethod_calls + 1
+                return 'forged'
+            end,
+            __pairs = function()
+                metamethod_calls = metamethod_calls + 1
+                return next, {}, nil
+            end,
+        })
+        assert.error_code(
+            RequestContext.validate(hostile_context, {}),
+            'PORT_REQUEST_CONTEXT_INVALID'
+        )
+        local hostile_options = setmetatable({}, {
+            __index = function()
+                metamethod_calls = metamethod_calls + 1
+                return true
+            end,
+        })
+        assert.error_code(
+            RequestContext.validate(context(false), hostile_options),
+            'PORT_REQUEST_CONTEXT_INVALID'
+        )
+        assert.equal(metamethod_calls, 0)
+        assert.error_code(
+            RequestContext.validate(context(false), { unexpected = true }),
+            'PORT_REQUEST_CONTEXT_INVALID'
+        )
+        assert.error_code(
+            RequestContext.validate(
+                context(false),
+                { require_idempotency = 'true' }
+            ),
+            'PORT_REQUEST_CONTEXT_INVALID'
+        )
+        local hostile_result = setmetatable({}, {
+            __index = function()
+                metamethod_calls = metamethod_calls + 1
+                return true
+            end,
+        })
+        assert.equal(PortContract.is_result(hostile_result), false)
+        assert.equal(metamethod_calls, 0)
+        local hostile_error = setmetatable({}, {
+            __index = function()
+                metamethod_calls = metamethod_calls + 1
+                return 'forged'
+            end,
+        })
+        assert.equal(PortContract.is_result({
+            ok = false,
+            error = hostile_error,
+        }), false)
+        assert.equal(metamethod_calls, 0)
 
         local SaveStore = require 'wzx.application.ports.save_store'
         local stage = stage_request('context-check', 'idempotency-context-check', 10)
@@ -984,6 +1046,158 @@ return {
         end)
         gate('not-a-result')
         assert.error_code(invalid_received, 'PORT_RESULT_INVALID')
+    end),
+
+    case('nonmutating completion failures remain closed and self-validating', function()
+        local ClockService = require 'wzx.application.ports.clock_service'
+        local request = { context = context(false) }
+        local received
+        local gate, _, gate_error = ClockService:completion_gate(
+            'now',
+            function(result)
+                received = result
+            end,
+            nil,
+            request
+        )
+        assert.is_nil(gate_error)
+        assert.equal(gate('malformed-completion'), true)
+        assert.error_code(received, 'PORT_RESULT_INVALID')
+        assert.is_nil(received.error.details)
+        assert.error_code(
+            ClockService:validate_result(
+                'now',
+                received,
+                request,
+                'COMPLETION'
+            ),
+            'PORT_RESULT_INVALID'
+        )
+    end),
+
+    case('port whitelists retain captured raw traversal primitives', function()
+        local ClockService = require 'wzx.application.ports.clock_service'
+        local original_pairs = _G.pairs
+        local validation
+        local ok, failure = xpcall(function()
+            _G.pairs = function()
+                return function()
+                    return nil
+                end
+            end
+            validation = ClockService:validate_request('now', {
+                unexpected = true,
+                context = context(false),
+            })
+        end, debug.traceback)
+        _G.pairs = original_pairs
+        if not ok then
+            error(failure)
+        end
+        assert.error_code(validation, 'PORT_REQUEST_INVALID')
+        assert.equal(validation.error.details.field, 'unexpected')
+        assert.equal(validation.error.details.reason, 'UNKNOWN_FIELD')
+    end),
+
+    case('error message keys are exactly bound to their stable codes', function()
+        local ClockService = require 'wzx.application.ports.clock_service'
+        local forged = PortContract.error('PLATFORM_UNAVAILABLE', {}, true)
+        forged.error.message_key = 'error.savestore.slot_3'
+
+        local validation = ClockService:validate_result(
+            'now',
+            forged,
+            { context = context(false) }
+        )
+        assert.error_code(validation, 'PORT_RESULT_INVALID')
+        assert.equal(
+            validation.error.details.reason,
+            'MESSAGE_KEY_CODE_MISMATCH'
+        )
+    end),
+
+    case('operation error validators receive admission and completion phases', function()
+        local phases = {}
+        local spec = PortContract.define({
+            name = 'ErrorPhaseProbe',
+            operations = {
+                {
+                    name = 'write',
+                    request_fields = { 'token' },
+                    mutating = true,
+                    requires_idempotency = true,
+                    validate_request = function()
+                        return PortContract.ok(true)
+                    end,
+                    validate_success = function()
+                        return PortContract.ok(true)
+                    end,
+                    validate_error = function(error_value, request, phase)
+                        phases[#phases + 1] = phase
+                        assert.equal(request.token, 'probe')
+                        if error_value.details.blocked then
+                            return PortContract.invalid_result(
+                                'error.details.blocked',
+                                'PROBE_ERROR_DETAILS_BLOCKED'
+                            )
+                        end
+                        return PortContract.ok(true)
+                    end,
+                    error_codes = { 'PROBE_FAILURE' },
+                },
+            },
+        })
+        local request = {
+            context = context(true, 'error-phase', 'error-phase-key'),
+            token = 'probe',
+        }
+        local admission = spec:sanitize_completion_result(
+            'write',
+            PortContract.error('PROBE_FAILURE', { reason = 'known' }, false),
+            request,
+            'ADMISSION'
+        )
+        assert.equal(admission.ok, true)
+        assert.equal(admission.value.ok, false)
+
+        local completion = spec:sanitize_completion_result(
+            'write',
+            PortContract.error('PROBE_FAILURE', {
+                request_key = request.context.idempotency_key,
+            }, false),
+            request,
+            'COMPLETION'
+        )
+        assert.equal(completion.ok, true)
+        assert.deep_equal(phases, { 'ADMISSION', 'COMPLETION' })
+
+        local blocked = spec:sanitize_completion_result(
+            'write',
+            PortContract.error('PROBE_FAILURE', { blocked = true }, false),
+            request,
+            'COMPLETION'
+        )
+        assert.error_code(blocked, 'PORT_RESULT_INVALID')
+        assert.equal(
+            blocked.error.details.reason,
+            'PROBE_ERROR_DETAILS_BLOCKED'
+        )
+
+        assert.throws(function()
+            PortContract.define({
+                name = 'InvalidErrorValidatorProbe',
+                operations = {
+                    {
+                        name = 'read',
+                        request_fields = {},
+                        validate_success = function()
+                            return PortContract.ok(true)
+                        end,
+                        validate_error = true,
+                    },
+                },
+            })
+        end, 'validate_error must be a function')
     end),
 
     case('all Fake factories are discoverable and satisfy their contracts', function()

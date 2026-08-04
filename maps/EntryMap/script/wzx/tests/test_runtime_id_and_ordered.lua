@@ -37,6 +37,46 @@ return {
         assert.error_code(RuntimeId.compose({ string.rep('a', 64), string.rep('b', 64), string.rep('c', 64) }), 'ID_TOO_LONG')
     end),
 
+    case('runtime id composition requires an exact dense plain array', function()
+        assert.error_code(RuntimeId.compose({ 'combat', 'player-1', extra = 'ignored' }), 'ID_INVALID')
+        assert.error_code(RuntimeId.compose({
+            [1] = 'combat',
+            [2] = 'player-1',
+            [1000000] = 'remote-extra',
+        }), 'ID_INVALID')
+        assert.error_code(RuntimeId.compose({
+            [1] = 'combat',
+            [3] = 'player-1',
+        }), 'ID_INVALID')
+
+        local calls = {
+            index = 0,
+            len = 0,
+            pairs = 0,
+        }
+        local hostile = setmetatable({ 'combat', 'player-1' }, {
+            __index = function()
+                calls.index = calls.index + 1
+                return 'forged'
+            end,
+            __len = function()
+                calls.len = calls.len + 1
+                return 2
+            end,
+            __pairs = function()
+                calls.pairs = calls.pairs + 1
+                return next, { 'combat', 'player-1' }, nil
+            end,
+        })
+
+        assert.error_code(RuntimeId.compose(hostile), 'ID_INVALID')
+        assert.deep_equal(calls, {
+            index = 0,
+            len = 0,
+            pairs = 0,
+        })
+    end),
+
     case('ordered helpers reject sparse data and sort without mutating input', function()
         assert.equal(Ordered.is_dense_array({ 'a', 'b', 'c' }), true)
         assert.equal(Ordered.is_dense_array({ [1] = 'a', [3] = 'c' }), false)
@@ -117,5 +157,36 @@ return {
         assert.error_code(Ordered.sorted_copy(sparse, function(left, right)
             return left < right
         end), 'INVALID_ARGUMENT')
+    end),
+
+    case('ordered helpers reject hostile metatables without invoking them', function()
+        local calls = {
+            index = 0,
+            len = 0,
+            pairs = 0,
+        }
+        local hostile = setmetatable({}, {
+            __index = function()
+                calls.index = calls.index + 1
+                return 'forged'
+            end,
+            __len = function()
+                calls.len = calls.len + 1
+                return 2
+            end,
+            __pairs = function()
+                calls.pairs = calls.pairs + 1
+                return next, { forged = true }, nil
+            end,
+        })
+
+        assert.equal(Ordered.is_dense_array(hostile), false)
+        assert.error_code(Ordered.copy_array(hostile), 'INVALID_ARGUMENT')
+        assert.error_code(Ordered.sorted_string_keys(hostile), 'INVALID_ARGUMENT')
+        assert.deep_equal(calls, {
+            index = 0,
+            len = 0,
+            pairs = 0,
+        })
     end),
 }

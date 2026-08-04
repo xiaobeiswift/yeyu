@@ -421,7 +421,7 @@ function Registry:list()
     for section_key in pairs(state.entries_by_key) do
         keys[#keys + 1] = section_key
     end
-    table.sort(keys)
+    table.sort(keys, Ordered.bytewise_string_less)
 
     local entries = {}
     local index

@@ -1,4 +1,5 @@
 local DecimalInteger = {}
+local math_floor = math.floor
 
 local MAX_SAFE_INTEGER = 9007199254740991
 
@@ -7,7 +8,7 @@ function DecimalInteger.encode(value)
         or value ~= value
         or value == math.huge
         or value == -math.huge
-        or value ~= math.floor(value)
+        or value ~= math_floor(value)
         or value < -MAX_SAFE_INTEGER
         or value > MAX_SAFE_INTEGER
     then

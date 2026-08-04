@@ -70,6 +70,36 @@ $wzxRoot = Assert-DescendantPath `
 $runner = Assert-DescendantPath `
     -Candidate (Join-Path $wzxRoot 'tests\runner.lua') `
     -Root $projectRoot
+$testRoot = Assert-DescendantPath `
+    -Candidate (Join-Path $wzxRoot 'tests') `
+    -Root $projectRoot
+$manifestPath = Assert-DescendantPath `
+    -Candidate (Join-Path $testRoot 'manifest.lua') `
+    -Root $projectRoot
+$declaredTests = @{}
+$manifestSource = Get-Content -LiteralPath $manifestPath -Raw
+$manifestMatches = [regex]::Matches(
+    $manifestSource,
+    '(?m)^[ \t]*[''"]wzx\.tests\.(test_[a-z0-9_]+)[''"][ \t]*,?[ \t]*(?:--[^\r\n]*)?$'
+)
+foreach ($manifestEntryMatch in $manifestMatches) {
+    $declaredTestName = $manifestEntryMatch.Groups[1].Value
+    if ($declaredTests.ContainsKey($declaredTestName)) {
+        throw "Duplicate test module in explicit manifest: $declaredTestName"
+    }
+    $declaredTests[$declaredTestName] = $true
+}
+$diskTests = @(
+    Get-ChildItem -LiteralPath $testRoot -File -Filter 'test_*.lua' |
+        Sort-Object -Property BaseName
+)
+$unlistedTests = @(
+    $diskTests | Where-Object { -not $declaredTests.ContainsKey($_.BaseName) }
+)
+if ($unlistedTests.Count -gt 0) {
+    $names = $unlistedTests | ForEach-Object { $_.Name }
+    throw "Test files missing from explicit manifest: $($names -join ', ')"
+}
 $luaExecutable = Resolve-Executable -Name $Lua
 $luacExecutable = Resolve-Executable -Name $Luac
 
@@ -85,10 +115,10 @@ foreach ($file in $luaFiles) {
     $checkedPath = Assert-DescendantPath -Candidate $file.FullName -Root $projectRoot
     & $luacExecutable -p $checkedPath
     if ($LASTEXITCODE -ne 0) {
-        throw "Lua 5.1 syntax check failed: $checkedPath"
+        throw "Lua syntax check failed: $checkedPath"
     }
 }
-Write-Host "Lua 5.1 syntax check: $($luaFiles.Count) file(s) passed."
+Write-Host "Lua syntax check: $($luaFiles.Count) file(s) passed."
 
 $pureRoots = @(
     (Join-Path $wzxRoot 'domain'),
@@ -100,7 +130,9 @@ $forbiddenRules = @(
     [pscustomobject]@{ Name = 'GlobalAPI'; Pattern = '\bGlobalAPI\b' },
     [pscustomobject]@{ Name = 'include'; Pattern = '\binclude\b' },
     [pscustomobject]@{ Name = 'math.random'; Pattern = '\bmath\s*\.\s*random(?:seed)?\b' },
-    [pscustomobject]@{ Name = 'os.time'; Pattern = '\bos\s*\.\s*time\b' }
+    [pscustomobject]@{ Name = 'os.time'; Pattern = '\bos\s*\.\s*time\b' },
+    [pscustomobject]@{ Name = 'rawset authority bypass'; Pattern = '\brawset\s*\(' },
+    [pscustomobject]@{ Name = 'debug library'; Pattern = '\bdebug\s*\.' }
 )
 $violations = New-Object 'System.Collections.Generic.List[string]'
 

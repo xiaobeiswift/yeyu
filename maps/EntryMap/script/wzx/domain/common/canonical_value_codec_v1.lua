@@ -3,6 +3,13 @@ local Result = require 'wzx.domain.common.result'
 local DecimalInteger = require 'wzx.domain.common.decimal_integer'
 
 local Codec = {}
+local decimal_encode = DecimalInteger.encode
+local is_dense_array = Ordered.is_dense_array
+local result_err = Result.err
+local result_ok = Result.ok
+local sorted_string_keys = Ordered.sorted_string_keys
+local math_floor = math.floor
+local string_match = string.match
 
 Codec.TYPE_STRING = 'STRING'
 Codec.TYPE_INTEGER = 'INTEGER'
@@ -18,12 +25,12 @@ local TAGS = {
 }
 
 local function u32be(value)
-    if type(value) ~= 'number' or value < 0 or value > MAX_U32 or value ~= math.floor(value) then
+    if type(value) ~= 'number' or value < 0 or value > MAX_U32 or value ~= math_floor(value) then
         return nil
     end
-    local b1 = math.floor(value / 16777216) % 256
-    local b2 = math.floor(value / 65536) % 256
-    local b3 = math.floor(value / 256) % 256
+    local b1 = math_floor(value / 16777216) % 256
+    local b2 = math_floor(value / 65536) % 256
+    local b3 = math_floor(value / 256) % 256
     local b4 = value % 256
     return string.char(b1, b2, b3, b4)
 end
@@ -32,7 +39,7 @@ local function is_ascii_name(value, max_bytes)
     return type(value) == 'string'
         and #value >= 1
         and #value <= max_bytes
-        and value:match('^[a-z][a-z0-9_]*$') ~= nil
+        and string_match(value, '^[a-z][a-z0-9_]*$') ~= nil
 end
 
 local function is_valid_utf8(value)
@@ -83,13 +90,13 @@ end
 
 local function encode_integer(value)
     if type(value) ~= 'number'
-        or value ~= math.floor(value)
+        or value ~= math_floor(value)
         or value < -MAX_SAFE_INTEGER
         or value > MAX_SAFE_INTEGER
     then
         return nil
     end
-    return DecimalInteger.encode(value)
+    return decimal_encode(value)
 end
 
 local function encode_value(value_type, value)
@@ -113,16 +120,19 @@ end
 
 function Codec.encode(namespace, field_specs, values)
     if not is_ascii_name(namespace, 48) then
-        return Result.err('CANONICAL_SCHEMA_INVALID', 'error.foundation.canonical_namespace_invalid', false)
+        return result_err('CANONICAL_SCHEMA_INVALID', 'error.foundation.canonical_namespace_invalid', false)
     end
-    if not Ordered.is_dense_array(field_specs) or type(values) ~= 'table' then
-        return Result.err('CANONICAL_SCHEMA_INVALID', 'error.foundation.canonical_fields_invalid', false)
+    if not is_dense_array(field_specs)
+        or type(values) ~= 'table'
+        or getmetatable(values) ~= nil
+    then
+        return result_err('CANONICAL_SCHEMA_INVALID', 'error.foundation.canonical_fields_invalid', false)
     end
 
     local namespace_length = u32be(#namespace)
     local field_count = u32be(#field_specs)
     if namespace_length == nil or field_count == nil then
-        return Result.err('CANONICAL_SCHEMA_INVALID', 'error.foundation.canonical_length_overflow', false)
+        return result_err('CANONICAL_SCHEMA_INVALID', 'error.foundation.canonical_length_overflow', false)
     end
 
     local chunks = { MAGIC, namespace_length, namespace, field_count }
@@ -131,25 +141,26 @@ function Codec.encode(namespace, field_specs, values)
     for i = 1, #field_specs do
         local spec = field_specs[i]
         if type(spec) ~= 'table'
+            or getmetatable(spec) ~= nil
             or not is_ascii_name(spec.name, 64)
             or TAGS[spec.type] == nil
             or known_fields[spec.name]
         then
-            return Result.err('CANONICAL_SCHEMA_INVALID', 'error.foundation.canonical_field_spec_invalid', false, {
+            return result_err('CANONICAL_SCHEMA_INVALID', 'error.foundation.canonical_field_spec_invalid', false, {
                 field_index = i,
             })
         end
         known_fields[spec.name] = true
 
-        local value = values[spec.name]
+        local value = rawget(values, spec.name)
         if value == nil then
-            return Result.err('CANONICAL_VALUE_INVALID', 'error.foundation.canonical_field_missing', false, {
+            return result_err('CANONICAL_VALUE_INVALID', 'error.foundation.canonical_field_missing', false, {
                 field = spec.name,
             })
         end
         local encoded_value = encode_value(spec.type, value)
         if encoded_value == nil then
-            return Result.err('CANONICAL_VALUE_INVALID', 'error.foundation.canonical_field_value_invalid', false, {
+            return result_err('CANONICAL_VALUE_INVALID', 'error.foundation.canonical_field_value_invalid', false, {
                 field = spec.name,
                 expected_type = spec.type,
             })
@@ -158,7 +169,7 @@ function Codec.encode(namespace, field_specs, values)
         local name_length = u32be(#spec.name)
         local value_length = u32be(#encoded_value)
         if name_length == nil or value_length == nil then
-            return Result.err('CANONICAL_VALUE_INVALID', 'error.foundation.canonical_length_overflow', false, {
+            return result_err('CANONICAL_VALUE_INVALID', 'error.foundation.canonical_length_overflow', false, {
                 field = spec.name,
             })
         end
@@ -170,20 +181,20 @@ function Codec.encode(namespace, field_specs, values)
         chunks[#chunks + 1] = encoded_value
     end
 
-    local keys_result = Ordered.sorted_string_keys(values)
+    local keys_result = sorted_string_keys(values)
     if not keys_result.ok then
         return keys_result
     end
     for i = 1, #keys_result.value do
         local key = keys_result.value[i]
         if not known_fields[key] then
-            return Result.err('CANONICAL_VALUE_INVALID', 'error.foundation.canonical_unknown_field', false, {
+            return result_err('CANONICAL_VALUE_INVALID', 'error.foundation.canonical_unknown_field', false, {
                 field = key,
             })
         end
     end
 
-    return Result.ok(table.concat(chunks))
+    return result_ok(table.concat(chunks))
 end
 
 return Codec

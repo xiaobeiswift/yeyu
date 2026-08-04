@@ -6,6 +6,36 @@ local TableShape = require 'wzx.domain.common.table_shape'
 local case = Harness.case
 local assert = Harness.assert
 
+local function hostile_table(metamethod_name, calls)
+    local metatable = {}
+    if metamethod_name == '__index' then
+        metatable.__index = function()
+            calls.count = calls.count + 1
+            return 'forged'
+        end
+    elseif metamethod_name == '__pairs' then
+        metatable.__pairs = function()
+            calls.count = calls.count + 1
+            return next, {}, nil
+        end
+    elseif metamethod_name == '__len' then
+        metatable.__len = function()
+            calls.count = calls.count + 1
+            return 0
+        end
+    else
+        error('unsupported hostile metamethod: ' .. tostring(metamethod_name))
+    end
+    return setmetatable({ stored = true }, metatable)
+end
+
+local function assert_plain_table_rejected(result, expected_path, calls)
+    assert.error_code(result, 'TABLE_SHAPE_INVALID')
+    assert.error_reason(result, 'PLAIN_TABLE_REQUIRED')
+    assert.equal(result.error.details.path, expected_path)
+    assert.equal(calls.count, 0)
+end
+
 local function domain_event()
     return {
         event_id = 'quest:main:1',
@@ -210,5 +240,47 @@ return {
         assert.truthy(copied.value.nested ~= source.nested)
         copied.value.nested.value = 99
         assert.equal(source.nested.value, 7)
+    end),
+
+    case('table shape rejects hostile root metatables without invoking them', function()
+        local metamethods = { '__index', '__pairs', '__len' }
+        local index
+        for index = 1, #metamethods do
+            local calls = { count = 0 }
+            local value = hostile_table(metamethods[index], calls)
+
+            assert_plain_table_rejected(
+                TableShape.validate_serializable(value, 3),
+                '$',
+                calls
+            )
+            assert_plain_table_rejected(
+                TableShape.deep_copy_serializable(value, 3),
+                '$',
+                calls
+            )
+        end
+    end),
+
+    case('table shape rejects hostile nested metatables without invoking them', function()
+        local metamethods = { '__index', '__pairs', '__len' }
+        local index
+        for index = 1, #metamethods do
+            local calls = { count = 0 }
+            local value = {
+                nested = hostile_table(metamethods[index], calls),
+            }
+
+            assert_plain_table_rejected(
+                TableShape.validate_serializable(value, 3),
+                '$.nested',
+                calls
+            )
+            assert_plain_table_rejected(
+                TableShape.deep_copy_serializable(value, 3),
+                '$.nested',
+                calls
+            )
+        end
     end),
 }

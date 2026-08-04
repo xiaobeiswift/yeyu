@@ -28,7 +28,7 @@ local function non_empty_bounded_string(value, maximum_bytes)
 end
 
 function SaveEnvelope.validate(envelope)
-    if type(envelope) ~= 'table' then
+    if type(envelope) ~= 'table' or getmetatable(envelope) ~= nil then
         return invalid('envelope', 'TABLE_REQUIRED')
     end
     local keys = Ordered.sorted_string_keys(envelope)

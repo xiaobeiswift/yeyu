@@ -820,6 +820,38 @@ return {
         assert.error_reason(wrong_curve_result, 'DEFINITION_CURVE_MISMATCH')
     end),
 
+    case('experience grants retain their captured aggregate validation authority', function()
+        local original_validate = CharacterAggregate.validate
+        local monkeypatch_calls = 0
+        local completed, failure = pcall(function()
+            CharacterAggregate.validate = function()
+                monkeypatch_calls = monkeypatch_calls + 1
+                return {
+                    ok = true,
+                    value = aggregate_state(),
+                }
+            end
+
+            local mismatched = aggregate_state()
+            mismatched.character_id = 'char_other'
+            local result = CharacterAggregate.grant_experience(
+                mismatched,
+                definition_facts(),
+                level_curve(),
+                1
+            )
+            assert.error_code(result, 'CHARACTER_BUILD_INVALID')
+            assert.error_reason(result, 'DEFINITION_CHARACTER_MISMATCH')
+            assert.equal(monkeypatch_calls, 0)
+        end)
+
+        CharacterAggregate.validate = original_validate
+        if not completed then
+            error(failure, 0)
+        end
+        assert.equal(CharacterAggregate.validate, original_validate)
+    end),
+
     case('aggregate boundaries reject hostile metatables and return defensive states', function()
         local definition = definition_facts()
         local curve = level_curve()

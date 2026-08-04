@@ -1,6 +1,9 @@
 local RuntimeId = require "wzx.domain.common.runtime_id"
 
 local RequestContext = {}
+local validate_runtime_component = RuntimeId.validate_component
+local math_floor = math.floor
+local raw_next = next
 
 local MAX_ID_BYTES = 64
 local MAX_SAFE_INTEGER = 9007199254740991
@@ -40,7 +43,7 @@ local function is_finite_number(value)
 end
 
 local function is_integer(value)
-    return is_finite_number(value) and value == math.floor(value)
+    return is_finite_number(value) and value == math_floor(value)
 end
 
 local function validate_identifier(value, field_name, required)
@@ -50,7 +53,7 @@ local function validate_identifier(value, field_name, required)
         return nil
     end
 
-    validated = RuntimeId.validate_component(value, field_name)
+    validated = validate_runtime_component(value, field_name)
     if not validated.ok then
         return result_error("PORT_REQUEST_CONTEXT_INVALID", {
             field = field_name,
@@ -66,15 +69,38 @@ end
 function RequestContext.validate(context, options)
     options = options or {}
 
-    if type(context) ~= "table" then
+    if type(options) ~= "table" or getmetatable(options) ~= nil then
+        return result_error("PORT_REQUEST_CONTEXT_INVALID", {
+            field = "options",
+            reason = "PLAIN_TABLE_REQUIRED",
+        })
+    end
+    local option_field
+    for option_field in raw_next, options do
+        if option_field ~= "require_idempotency" then
+            return result_error("PORT_REQUEST_CONTEXT_INVALID", {
+                field = "options." .. tostring(option_field),
+                reason = "UNKNOWN_FIELD",
+            })
+        end
+    end
+    local require_idempotency = rawget(options, "require_idempotency")
+    if require_idempotency ~= nil and type(require_idempotency) ~= "boolean" then
+        return result_error("PORT_REQUEST_CONTEXT_INVALID", {
+            field = "options.require_idempotency",
+            reason = "BOOLEAN_REQUIRED",
+        })
+    end
+
+    if type(context) ~= "table" or getmetatable(context) ~= nil then
         return result_error("PORT_REQUEST_CONTEXT_INVALID", {
             field = "context",
-            reason = "TABLE_REQUIRED",
+            reason = "PLAIN_TABLE_REQUIRED",
         })
     end
 
     local field
-    for field in pairs(context) do
+    for field in raw_next, context do
         if type(field) ~= "string" or not ALLOWED_FIELDS[field] then
             return result_error("PORT_REQUEST_CONTEXT_INVALID", {
                 field = tostring(field),
@@ -100,10 +126,10 @@ function RequestContext.validate(context, options)
     local idempotency_error = validate_identifier(
         context.idempotency_key,
         "idempotency_key",
-        options.require_idempotency == true
+        require_idempotency == true
     )
     if idempotency_error then
-        if options.require_idempotency == true and context.idempotency_key == nil then
+        if require_idempotency == true and context.idempotency_key == nil then
             idempotency_error.error.code = "PORT_IDEMPOTENCY_REQUIRED"
             idempotency_error.error.message_key = "error.port_idempotency_required"
         end

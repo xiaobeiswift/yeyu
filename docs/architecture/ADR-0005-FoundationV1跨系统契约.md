@@ -78,6 +78,8 @@ payload = {
 
 Y3 表存档的槽根表不计入“三层嵌套”：`payload` 是第 1 层、section 是第 2 层、section 内的行表或标量集合是第 3 层；第 3 层之下只能是标量。为此 `SaveManifest.slot_revision_entries` 不是“数组中再套行表”，而是固定扁平键表：每个槽 2–5 使用 `slot_<id>_schema_version/revision/checkpoint_id/payload_checksum` 四个标量键。任何整槽 Codec 必须在写平台前执行相同深度校验。
 
+若 section 使用“行对象数组”，该数组本身必须是 `payload` 的直属 section，例如 `payload.character_rows[index].character_id`；禁止再包成 `payload.characters.character_rows[index]`，后者会把行对象推到第 4 层。一个逻辑 DTO 需要元数据和多组行时，必须拆成同一 owner 的多个直属 section，并由同一槽 change set 一次提交；不得把逻辑 DTO 根误当成额外的持久化层。
+
 ## 6. Lua 运行时交集
 
 领域层采用 Lua 5.1 与 Y3 定制 Lua 5.4 的公共语法子集，不使用位运算符、`//`、`<close>`、`string.pack`、`table.unpack` 或引擎定点数隐式行为。确定性算法必须在离线 Lua 5.1 与 Y3 运行时执行同一黄金向量。

@@ -1,6 +1,7 @@
 -- Pure Lua 5.1/5.4 SHA-256. Uses arithmetic bit operations for portability.
 
 local Sha256 = {}
+local math_floor = math.floor
 
 local MOD = 4294967296
 local HEX = '0123456789abcdef'
@@ -75,7 +76,7 @@ local function bnot(value)
 end
 
 local function rshift(value, count)
-    return math.floor(normalize(value) / (2 ^ count))
+    return math_floor(normalize(value) / (2 ^ count))
 end
 
 local function lshift(value, count)
@@ -87,9 +88,9 @@ local function ror(value, count)
 end
 
 local function append_u32(bytes, value)
-    bytes[#bytes + 1] = math.floor(value / 16777216) % 256
-    bytes[#bytes + 1] = math.floor(value / 65536) % 256
-    bytes[#bytes + 1] = math.floor(value / 256) % 256
+    bytes[#bytes + 1] = math_floor(value / 16777216) % 256
+    bytes[#bytes + 1] = math_floor(value / 65536) % 256
+    bytes[#bytes + 1] = math_floor(value / 256) % 256
     bytes[#bytes + 1] = value % 256
 end
 
@@ -97,7 +98,7 @@ local function hex_u32(value)
     local chars = {}
     local index
     for index = 7, 0, -1 do
-        local nibble = math.floor(value / (16 ^ index)) % 16
+        local nibble = math_floor(value / (16 ^ index)) % 16
         chars[#chars + 1] = HEX:sub(nibble + 1, nibble + 1)
     end
     return table.concat(chars)
@@ -114,7 +115,7 @@ function Sha256.hex(message)
     while (#bytes % 64) ~= 56 do
         bytes[#bytes + 1] = 0
     end
-    append_u32(bytes, math.floor(bit_length / MOD))
+    append_u32(bytes, math_floor(bit_length / MOD))
     append_u32(bytes, bit_length % MOD)
 
     local h0 = 1779033703
