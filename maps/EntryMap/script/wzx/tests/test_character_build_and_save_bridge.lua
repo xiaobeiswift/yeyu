@@ -1,5 +1,6 @@
 local Harness = require 'wzx.tests.harness'
 local CharacterCatalog = require 'wzx.config.schema.character.catalog'
+local CharacterEventBus = require 'wzx.application.character.character_event_bus'
 local CharacterRules = require 'wzx.application.character.character_rules'
 local CharacterSaveBridge = require 'wzx.application.use_cases.character.character_save_bridge'
 local CharacterSaveCodec = require 'wzx.domain.character.character_save_codec'
@@ -130,12 +131,13 @@ local function build_rules()
     return rules.value
 end
 
-local function build_service(with_save)
+local function build_service(with_save, with_events)
     local rules = build_rules()
     local repository = FakeCharacterRepository.new()
     local save_bridge
+    local store
     if with_save then
-        local store = MemorySaveStore.new()
+        store = MemorySaveStore.new()
         local coordinator = SaveCoordinator.bind({ save_store = store })
         assert.equal(coordinator.ok, true)
         local bridge = CharacterSaveBridge.bind({
@@ -146,13 +148,25 @@ local function build_service(with_save)
         assert.equal(bridge.ok, true)
         save_bridge = bridge.value
     end
+    local event_bus
+    if with_events then
+        local bus = CharacterEventBus.new()
+        assert.equal(bus.ok, true)
+        event_bus = bus.value
+    end
     local service = CharacterWriteService.bind({
         rules = rules,
         repository = repository,
         save_bridge = save_bridge,
+        event_bus = event_bus,
     })
     assert.equal(service.ok, true)
-    return service.value, CharacterWriteService.fake_invoke(repository), repository, save_bridge
+    return service.value,
+        CharacterWriteService.fake_invoke(repository),
+        repository,
+        save_bridge,
+        event_bus,
+        store
 end
 
 return {
@@ -251,8 +265,9 @@ return {
         assert.equal(bad.error.code, 'CHARACTER_CONTRIBUTION_INVALID')
     end),
 
-    case('character write syncs slot 3 bundle through SaveCoordinator', function()
-        local service, invoke, repository, save_bridge = build_service(true)
+    case('character write syncs slot 3 and slot 5 through SaveCoordinator', function()
+        local service, invoke, repository, save_bridge, _, store =
+            build_service(true, false)
         local created = service:create_owned({
             player_save_scope = 'player001',
             character_id = 'char_hero',
@@ -262,10 +277,11 @@ return {
             source_reference = 'quest_main_001:reward:1',
             request_id = 'request_create_1',
         }, invoke)
-        assert.equal(created.ok, true)
+        assert.equal(created.ok, true, created.error and created.error.code)
         assert.equal(created.value.status, 'COMMITTED')
         assert.equal(created.value.save.status, 'COMMITTED')
         assert.equal(created.value.save.envelope_revision, 1)
+        assert.equal(created.value.save.receipt_envelope_revision, 1)
         assert.not_nil(created.value.save.bundle.character_rows)
         assert.equal(#created.value.save.bundle.character_rows, 1)
         assert.equal(
@@ -275,6 +291,21 @@ return {
         assert.equal(
             #created.value.save.bundle.character_talent_rows,
             1
+        )
+        assert.not_nil(created.value.save.receipt_bundle)
+        assert.equal(
+            #created.value.save.receipt_bundle.character_operation_receipts,
+            1
+        )
+        assert.equal(
+            created.value.save.receipt_bundle.character_operation_receipts[1]
+                .operation_type,
+            'CREATE_OWNED_CHARACTER'
+        )
+        assert.equal(
+            created.value.save.receipt_bundle.character_operation_receipts[1]
+                .status,
+            'COMMITTED'
         )
 
         local granted = service:grant_experience({
@@ -286,25 +317,89 @@ return {
             transaction_id = 'character_experience_hero_tx_001',
             request_id = 'request_xp_1',
         }, invoke)
-        assert.equal(granted.ok, true)
+        assert.equal(granted.ok, true, granted.error and granted.error.code)
         assert.equal(granted.value.save.status, 'COMMITTED')
         assert.equal(granted.value.save.envelope_revision, 2)
+        assert.equal(granted.value.save.receipt_envelope_revision, 2)
         assert.equal(
             granted.value.save.bundle.character_rows[1].experience,
             50
+        )
+        assert.equal(
+            #granted.value.save.receipt_bundle.character_operation_receipts,
+            2
         )
 
         local snapshot = save_bridge:snapshot_from_repository('player001')
         assert.equal(snapshot.ok, true)
         assert.equal(snapshot.value.character_save_revision, 2)
+        assert.equal(snapshot.value.receipt_save_revision, 2)
         assert.equal(snapshot.value.character_states[1].experience, 50)
+        assert.equal(#snapshot.value.receipt_rows, 2)
 
-        -- Authority snapshot remains the source of truth for the bridge.
+        local committed = store:get_committed_snapshot()
+        assert.not_nil(committed.player001[3])
+        assert.not_nil(committed.player001[5])
+        assert.equal(
+            #committed.player001[5].payload.character_operation_receipts,
+            2
+        )
+
         local authority = repository:get_authority_snapshot()
         assert.equal(
             authority.players.player001.characters.char_hero.experience,
             50
         )
+    end),
+
+    case('committed writes publish domain events with de-duplication', function()
+        local service, invoke, _, _, event_bus = build_service(false, true)
+        local created = service:create_owned({
+            player_save_scope = 'player001',
+            character_id = 'char_hero',
+            receipt_id = 'character:create:hero_receipt_001',
+            transaction_id = 'character_create_hero_tx_001',
+            source_type = 'QUEST',
+            source_reference = 'quest_main_001:reward:1',
+            request_id = 'request_create_1',
+            correlation_id = 'correlation_create_1',
+        }, invoke)
+        assert.equal(created.ok, true)
+        assert.equal(#created.value.events >= 2, true)
+        assert.equal(created.value.events[1].event_type, 'CharacterOwned')
+        assert.equal(created.value.events[1].accepted, true)
+        assert.equal(
+            created.value.events[2].event_type,
+            'CharacterTalentUnlocked'
+        )
+
+        local listed = event_bus:list()
+        assert.equal(listed.ok, true)
+        assert.equal(#listed.value >= 2, true)
+        assert.equal(listed.value[1].source_system, '01')
+        assert.equal(listed.value[1].payload.character_id, 'char_hero')
+
+        local renamed = service:rename_protagonist({
+            player_save_scope = 'player001',
+            character_id = 'char_hero',
+            new_name = 'MistWalker',
+            receipt_id = 'character:rename:hero_receipt_001',
+            transaction_id = 'character_rename_hero_tx_001',
+            request_id = 'request_rename_1',
+            correlation_id = 'correlation_rename_1',
+        }, invoke)
+        assert.equal(renamed.ok, true, renamed.error and renamed.error.code)
+        assert.equal(renamed.value.events[1].ok, true)
+        assert.equal(renamed.value.events[1].event_type, 'CharacterRenamed')
+
+        local after_rename = event_bus:list()
+        assert.equal(after_rename.ok, true)
+        local rename_event = after_rename.value[#after_rename.value]
+        assert.equal(rename_event.event_type, 'CharacterRenamed')
+        assert.equal(type(rename_event.payload.name_digest), 'string')
+        assert.equal(#rename_event.payload.name_digest, 64)
+        -- full name must not appear in the event payload
+        assert.is_nil(rename_event.payload.new_name)
     end),
 
     case('save bridge encodes empty player as empty section bundle', function()

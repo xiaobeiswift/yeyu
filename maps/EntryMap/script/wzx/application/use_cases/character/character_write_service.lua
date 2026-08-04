@@ -1,4 +1,5 @@
 local CanonicalReceiptHashV1 = require 'wzx.domain.common.canonical_receipt_hash_v1'
+local CharacterEventBus = require 'wzx.application.character.character_event_bus'
 local CharacterReceiptCodec = require 'wzx.domain.character.character_receipt_codec'
 local CharacterRepository = require 'wzx.application.ports.character_repository'
 local CharacterSaveBridge = require 'wzx.application.use_cases.character.character_save_bridge'
@@ -343,11 +344,111 @@ local function maybe_persist_save(self, player_save_scope, request_id, correlati
     })
 end
 
+local function append_event(events, published)
+    if not published.ok then
+        events[#events + 1] = {
+            ok = false,
+            error = published.error,
+        }
+        return
+    end
+    events[#events + 1] = {
+        ok = true,
+        accepted = published.value.accepted,
+        duplicate = published.value.duplicate,
+        event_id = published.value.event_id,
+        event_type = published.value.event
+            and published.value.event.event_type
+            or nil,
+    }
+end
+
+local function emit_committed_events(self, commit_request, completion, plan)
+    local state = STATES[self]
+    local events = {}
+    if state == nil or state.event_bus == nil then
+        return events
+    end
+    local bus = state.event_bus
+    local result = completion.value.result
+    local correlation_id = commit_request.context.correlation_id
+    local receipt_id = commit_request.receipt_id
+    local operation = commit_request.operation_type
+
+    if operation == CREATE then
+        append_event(events, bus:publish_character_owned({
+            character_id = result.character_id,
+            source_type = commit_request.command.source_type,
+            source_reference = commit_request.command.source_reference,
+            receipt_id = receipt_id,
+            already_owned = result.already_owned,
+            revision = result.character_revision,
+            correlation_id = correlation_id,
+        }))
+        if result.already_owned ~= true
+            and completion.value
+            and type_value(commit_request.after_state) == 'table'
+        then
+            local talent_ids = commit_request.after_state.unlocked_talent_ids or {}
+            local index
+            for index = 1, #talent_ids do
+                append_event(events, bus:publish_talent_unlocked({
+                    character_id = result.character_id,
+                    talent_id = talent_ids[index],
+                    source_reference = commit_request.command.source_reference,
+                    receipt_id = receipt_id,
+                    revision = result.character_revision,
+                    correlation_id = correlation_id,
+                }))
+            end
+        end
+    elseif operation == EXPERIENCE then
+        append_event(events, bus:publish_experience_granted({
+            character_id = result.character_id,
+            amount = result.amount,
+            old_experience = result.old_experience,
+            new_experience = result.new_experience,
+            reason = result.reason,
+            receipt_id = receipt_id,
+            revision = result.character_revision,
+            correlation_id = correlation_id,
+        }))
+        if result.new_level ~= result.old_level then
+            local unlocked_refs = {}
+            if plan ~= nil and type_value(plan.reward_refs) == 'table' then
+                local index
+                for index = 1, #plan.reward_refs do
+                    unlocked_refs[index] = plan.reward_refs[index]
+                end
+            end
+            append_event(events, bus:publish_level_changed({
+                character_id = result.character_id,
+                old_level = result.old_level,
+                new_level = result.new_level,
+                unlocked_refs = unlocked_refs,
+                receipt_id = receipt_id,
+                revision = result.character_revision,
+                correlation_id = correlation_id,
+            }))
+        end
+    elseif operation == RENAME then
+        append_event(events, bus:publish_renamed({
+            character_id = result.character_id,
+            new_name = result.new_name,
+            receipt_id = receipt_id,
+            revision = result.character_revision,
+            correlation_id = correlation_id,
+        }))
+    end
+    return events
+end
+
 local function finalize_write(
     self,
     commit_request,
     completion,
-    player_save_scope
+    player_save_scope,
+    plan
 )
     local pending = {
         query_proof = query_proof_from_commit(commit_request),
@@ -366,6 +467,7 @@ local function finalize_write(
                 pending = pending,
                 error = completion.error,
                 save = { status = 'SKIPPED' },
+                events = {},
             })
         end
         return completion
@@ -387,6 +489,13 @@ local function finalize_write(
         save_payload = save_result.value
     end
 
+    local events = emit_committed_events(
+        self,
+        commit_request,
+        completion,
+        plan
+    )
+
     return result_ok({
         status = 'COMMITTED',
         pending = pending,
@@ -395,6 +504,7 @@ local function finalize_write(
         character_save_revision = completion.value.character_save_revision,
         receipt_save_revision = completion.value.receipt_save_revision,
         save = save_payload,
+        events = events,
     })
 end
 
@@ -640,7 +750,8 @@ function Service:create_owned(input, invoke)
         self,
         commit_request,
         committed,
-        identity.player_save_scope
+        identity.player_save_scope,
+        nil
     )
 end
 
@@ -854,7 +965,8 @@ function Service:grant_experience(input, invoke)
         self,
         commit_request.value,
         committed,
-        identity.player_save_scope
+        identity.player_save_scope,
+        planned.value
     )
     if not finalized.ok then
         return finalized
@@ -974,7 +1086,8 @@ function Service:rename_protagonist(input, invoke)
         self,
         commit_request.value,
         committed,
-        identity.player_save_scope
+        identity.player_save_scope,
+        nil
     )
 end
 
@@ -1402,12 +1515,21 @@ function CharacterWriteService.bind(options)
             field = 'save_bridge',
         })
     end
+    local event_bus = raw_get(options, 'event_bus')
+    if event_bus ~= nil
+        and not CharacterEventBus.is_authority(event_bus)
+    then
+        return invalid_argument('EVENT_BUS_AUTHORITY_REQUIRED', {
+            field = 'event_bus',
+        })
+    end
 
     local service = set_metatable({}, Service)
     STATES[service] = {
         rules = rules,
         repository = repository,
         save_bridge = save_bridge,
+        event_bus = event_bus,
     }
     return result_ok(service)
 end
