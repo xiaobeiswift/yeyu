@@ -108,4 +108,70 @@ function WorldQuestBridge.discover_and_relay(world_service, quest_service, input
     })
 end
 
+function WorldQuestBridge.relay_chest(fact_consumer, open_result)
+    if not is_fact_consumer(fact_consumer) then
+        return invalid('FACT_CONSUMER_REQUIRED', { field = 'fact_consumer' })
+    end
+    if type_value(open_result) ~= 'table' or get_metatable(open_result) ~= nil then
+        return invalid('OPEN_RESULT_REQUIRED')
+    end
+    return relay_one(fact_consumer, raw_get(open_result, 'chest_event'))
+end
+
+function WorldQuestBridge.relay_search(fact_consumer, search_result)
+    if not is_fact_consumer(fact_consumer) then
+        return invalid('FACT_CONSUMER_REQUIRED', { field = 'fact_consumer' })
+    end
+    if type_value(search_result) ~= 'table' or get_metatable(search_result) ~= nil then
+        return invalid('SEARCH_RESULT_REQUIRED')
+    end
+    return relay_one(fact_consumer, raw_get(search_result, 'search_event'))
+end
+
+function WorldQuestBridge.open_chest_and_relay(world_service, quest_service, input)
+    if type_value(world_service) ~= 'table'
+        or type_value(world_service.open_chest) ~= 'function'
+    then
+        return invalid('WORLD_SERVICE_REQUIRED')
+    end
+    if not is_fact_consumer(quest_service) then
+        return invalid('QUEST_SERVICE_REQUIRED')
+    end
+    local opened = world_service:open_chest(input)
+    if not opened.ok then
+        return opened
+    end
+    local relayed = WorldQuestBridge.relay_chest(quest_service, opened.value)
+    if not relayed.ok then
+        return relayed
+    end
+    return result_ok({
+        open = opened.value,
+        quest_relay = relayed.value,
+    })
+end
+
+function WorldQuestBridge.resolve_search_and_relay(world_service, quest_service, input)
+    if type_value(world_service) ~= 'table'
+        or type_value(world_service.resolve_search) ~= 'function'
+    then
+        return invalid('WORLD_SERVICE_REQUIRED')
+    end
+    if not is_fact_consumer(quest_service) then
+        return invalid('QUEST_SERVICE_REQUIRED')
+    end
+    local resolved = world_service:resolve_search(input)
+    if not resolved.ok then
+        return resolved
+    end
+    local relayed = WorldQuestBridge.relay_search(quest_service, resolved.value)
+    if not relayed.ok then
+        return relayed
+    end
+    return result_ok({
+        search = resolved.value,
+        quest_relay = relayed.value,
+    })
+end
+
 return WorldQuestBridge

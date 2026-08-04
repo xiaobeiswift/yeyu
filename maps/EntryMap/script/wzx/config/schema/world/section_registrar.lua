@@ -38,6 +38,13 @@ local DEFINITIONS = {
         validator_id = 'validator_world_event_receipts_v1',
         codec_id = 'codec_world_save_bundle_v1',
     },
+    {
+        section_key = 'world_interactable_states',
+        section_path = 'world_interactable_states',
+        slot_id = 2,
+        validator_id = 'validator_world_interactable_states_v1',
+        codec_id = 'codec_world_save_bundle_v1',
+    },
 }
 
 local function definition_copy(source)

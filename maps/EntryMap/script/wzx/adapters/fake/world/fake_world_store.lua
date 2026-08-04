@@ -68,6 +68,7 @@ local function copy_state(state)
         },
         discovered = copy_map(state.discovered or {}),
         flags = copy_map(state.flags or {}),
+        interactables = copy_map(state.interactables or {}),
         event_receipts = copy_map(state.event_receipts or {}),
         command_receipts = copy_map(state.command_receipts or {}),
     })

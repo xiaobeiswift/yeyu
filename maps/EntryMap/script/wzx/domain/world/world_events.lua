@@ -130,6 +130,78 @@ function WorldEvents.build_flag_changed(state, flag_id, old_value, new_value, re
     return finalize(event)
 end
 
+function WorldEvents.build_chest_opened(state, interactable, receipt_id, terminal_state)
+    if type_value(state) ~= 'table' or get_metatable(state) ~= nil then
+        return invalid('STATE_REQUIRED')
+    end
+    if type_value(interactable) ~= 'table' or get_metatable(interactable) ~= nil then
+        return invalid('INTERACTABLE_REQUIRED')
+    end
+    local receipt_check = RuntimeId.validate_derived(receipt_id, 'receipt_id')
+    if not receipt_check.ok then
+        return invalid('RECEIPT_INVALID')
+    end
+
+    local digest = hash_event_id('ChestOpened', receipt_id)
+    if not digest.ok then
+        return digest
+    end
+
+    local event = {
+        event_id = 'world:chest:' .. digest.value,
+        event_type = 'ChestOpened',
+        schema_version = 1,
+        aggregate_id = interactable.id,
+        revision = state.world_revision or 0,
+        payload = {
+            interactable_id = interactable.id,
+            location_id = interactable.location_id,
+            reward_id = interactable.action_ref_id,
+            reward_receipt_id = receipt_id,
+            state = terminal_state or 'OPENED',
+        },
+        source_system = SOURCE_SYSTEM,
+        causation_id = receipt_id,
+    }
+    return finalize(event)
+end
+
+function WorldEvents.build_search_resolved(state, interactable, receipt_id)
+    if type_value(state) ~= 'table' or get_metatable(state) ~= nil then
+        return invalid('STATE_REQUIRED')
+    end
+    if type_value(interactable) ~= 'table' or get_metatable(interactable) ~= nil then
+        return invalid('INTERACTABLE_REQUIRED')
+    end
+    local receipt_check = RuntimeId.validate_derived(receipt_id, 'receipt_id')
+    if not receipt_check.ok then
+        return invalid('RECEIPT_INVALID')
+    end
+
+    local digest = hash_event_id('SearchPointResolved', receipt_id)
+    if not digest.ok then
+        return digest
+    end
+
+    local event = {
+        event_id = 'world:search:' .. digest.value,
+        event_type = 'SearchPointResolved',
+        schema_version = 1,
+        aggregate_id = interactable.id,
+        revision = state.world_revision or 0,
+        payload = {
+            interactable_id = interactable.id,
+            location_id = interactable.location_id,
+            result_type = interactable.result_type,
+            result_ref = interactable.result_ref_id,
+            receipt_id = receipt_id,
+        },
+        source_system = SOURCE_SYSTEM,
+        causation_id = receipt_id,
+    }
+    return finalize(event)
+end
+
 WorldEvents.SOURCE_SYSTEM = SOURCE_SYSTEM
 
 return WorldEvents

@@ -6,6 +6,7 @@ local Validation = require 'wzx.config.schema.world.validation'
 local AreaDefinition = require 'wzx.config.schema.world.area_definition'
 local LocationDefinition = require 'wzx.config.schema.world.location_definition'
 local WorldFlagDefinition = require 'wzx.config.schema.world.world_flag_definition'
+local InteractableDefinition = require 'wzx.config.schema.world.interactable_definition'
 
 local Catalog = {}
 local error_value = error
@@ -33,11 +34,13 @@ local COLLECTION_ORDER = {
     'flag_definitions',
     'location_definitions',
     'area_definitions',
+    'interactable_definitions',
 }
 local COLLECTION_FIELDS = {
     flag_definitions = true,
     location_definitions = true,
     area_definitions = true,
+    interactable_definitions = true,
 }
 local COLLECTION_SPECS = {
     flag_definitions = {
@@ -51,6 +54,10 @@ local COLLECTION_SPECS = {
     area_definitions = {
         registry_name = 'area_definitions',
         normalize_entry = AreaDefinition.validate,
+    },
+    interactable_definitions = {
+        registry_name = 'interactable_definitions',
+        normalize_entry = InteractableDefinition.validate,
     },
 }
 
@@ -174,6 +181,30 @@ local function validate_cross_references(registries)
         end
     end
 
+    local interactables = registries.interactable_definitions:list()
+    if not interactables.ok then
+        return interactables
+    end
+    for index = 1, #interactables.value do
+        local interactable = interactables.value[index]
+        local location = registries.location_definitions:get(interactable.location_id)
+        if not location.ok then
+            return invalid('location_id', 'REFERENCE_NOT_FOUND', {
+                interactable_id = interactable.id,
+                reference_id = interactable.location_id,
+            })
+        end
+        if interactable.flag_id ~= nil then
+            local flag = registries.flag_definitions:get(interactable.flag_id)
+            if not flag.ok then
+                return invalid('flag_id', 'REFERENCE_NOT_FOUND', {
+                    interactable_id = interactable.id,
+                    reference_id = interactable.flag_id,
+                })
+            end
+        end
+    end
+
     return result_ok(true)
 end
 
@@ -286,6 +317,44 @@ function CatalogView:require_flag(flag_id)
             'error.world.deprecated',
             'FLAG_DEPRECATED',
             { flag_id = flag_id }
+        )
+    end
+    return found
+end
+
+function CatalogView:require_interactable(interactable_id)
+    local state = STATES[self]
+    if state == nil then
+        return catalog_error(
+            WorldErrorCodes.WORLD_ARGUMENT_INVALID,
+            'error.world.catalog_authority_required',
+            'CATALOG_AUTHORITY_REQUIRED'
+        )
+    end
+    local checked = validate_content_id(interactable_id, 'interact_', 'interactable_id')
+    if not checked.ok then
+        return catalog_error(
+            WorldErrorCodes.WORLD_ARGUMENT_INVALID,
+            'error.world.interactable_id_invalid',
+            'INTERACTABLE_ID_INVALID',
+            { field = 'interactable_id' }
+        )
+    end
+    local found = state.registries.interactable_definitions:get(interactable_id)
+    if not found.ok then
+        return catalog_error(
+            WorldErrorCodes.WORLD_INTERACTABLE_UNKNOWN,
+            'error.world.interactable_unknown',
+            'INTERACTABLE_UNKNOWN',
+            { interactable_id = interactable_id }
+        )
+    end
+    if found.value.deprecated then
+        return catalog_error(
+            WorldErrorCodes.WORLD_DEPRECATED,
+            'error.world.deprecated',
+            'INTERACTABLE_DEPRECATED',
+            { interactable_id = interactable_id }
         )
     end
     return found

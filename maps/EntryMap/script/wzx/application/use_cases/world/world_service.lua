@@ -234,4 +234,62 @@ function Service:list_discovered()
     return WorldState.list_discovered(loaded.value)
 end
 
+function Service:open_chest(input)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('SERVICE_AUTHORITY_REQUIRED')
+    end
+    local loaded = load_state(state)
+    if not loaded.ok then
+        return loaded
+    end
+    local opened = WorldState.open_chest(loaded.value, state.catalog, input)
+    if not opened.ok then
+        return opened
+    end
+    local persisted = persist_state(state)
+    if not persisted.ok then
+        return persisted
+    end
+    opened.value.persisted = persisted.value.persisted
+    return opened
+end
+
+function Service:resolve_search(input)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('SERVICE_AUTHORITY_REQUIRED')
+    end
+    local loaded = load_state(state)
+    if not loaded.ok then
+        return loaded
+    end
+    local resolved = WorldState.resolve_search(loaded.value, state.catalog, input)
+    if not resolved.ok then
+        return resolved
+    end
+    local persisted = persist_state(state)
+    if not persisted.ok then
+        return persisted
+    end
+    resolved.value.persisted = persisted.value.persisted
+    return resolved
+end
+
+function Service:get_interactable_state(interactable_id)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('SERVICE_AUTHORITY_REQUIRED')
+    end
+    local loaded = load_state(state)
+    if not loaded.ok then
+        return loaded
+    end
+    return WorldState.get_interactable_state(
+        loaded.value,
+        state.catalog,
+        interactable_id
+    )
+end
+
 return WorldService

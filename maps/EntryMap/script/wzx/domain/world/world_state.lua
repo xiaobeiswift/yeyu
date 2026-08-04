@@ -45,9 +45,23 @@ function WorldState.empty()
         },
         discovered = {},
         flags = {},
+        interactables = {},
         event_receipts = {},
         command_receipts = {},
     }
+end
+
+local function ensure_interactable_row(state, interactable)
+    local row = state.interactables[interactable.id]
+    if row == nil then
+        row = {
+            interactable_id = interactable.id,
+            state = interactable.initial_state or 'AVAILABLE',
+            receipt_id = nil,
+        }
+        state.interactables[interactable.id] = row
+    end
+    return row
 end
 
 local function copy_position(position)
@@ -490,6 +504,293 @@ function WorldState.list_discovered(state)
         }
     end
     return result_ok(rows)
+end
+
+function WorldState.get_interactable_state(state, catalog, interactable_id)
+    if type_value(state) ~= 'table' or get_metatable(state) ~= nil then
+        return invalid('STATE_REQUIRED')
+    end
+    if type_value(catalog) ~= 'table' then
+        return invalid('CATALOG_REQUIRED')
+    end
+    local interactable = catalog:require_interactable(interactable_id)
+    if not interactable.ok then
+        return interactable
+    end
+    interactable = interactable.value
+    local row = ensure_interactable_row(state, interactable)
+    return result_ok({
+        interactable_id = row.interactable_id,
+        state = row.state,
+        receipt_id = row.receipt_id,
+        interactable_type = interactable.interactable_type,
+        location_id = interactable.location_id,
+    })
+end
+
+function WorldState.open_chest(state, catalog, input)
+    if type_value(state) ~= 'table' or get_metatable(state) ~= nil then
+        return invalid('STATE_REQUIRED')
+    end
+    if type_value(catalog) ~= 'table' then
+        return invalid('CATALOG_REQUIRED')
+    end
+    if type_value(input) ~= 'table' or get_metatable(input) ~= nil then
+        return invalid('INPUT_REQUIRED')
+    end
+
+    local interactable_id = raw_get(input, 'interactable_id')
+    local open_receipt_id = raw_get(input, 'open_receipt_id')
+    local command_id = raw_get(input, 'command_id')
+
+    local receipt_check = validate_derived(open_receipt_id, 'open_receipt_id')
+    if not receipt_check.ok then
+        return invalid('OPEN_RECEIPT_INVALID')
+    end
+
+    if type_value(command_id) == 'string' and command_id ~= '' then
+        local prior = state.command_receipts[command_id]
+        if prior ~= nil and prior.kind == 'OPEN_CHEST' then
+            return result_ok({
+                already_opened = true,
+                command_replay = true,
+                interactable_id = prior.interactable_id,
+                chest_event = nil,
+            })
+        end
+    end
+
+    local interactable = catalog:require_interactable(interactable_id)
+    if not interactable.ok then
+        return interactable
+    end
+    interactable = interactable.value
+    if interactable.interactable_type ~= 'CHEST' then
+        return fail(
+            WorldErrorCodes.WORLD_INTERACTABLE_TYPE_MISMATCH,
+            'CHEST_REQUIRED',
+            {
+                interactable_id = interactable.id,
+                interactable_type = interactable.interactable_type,
+            }
+        )
+    end
+
+    local row = ensure_interactable_row(state, interactable)
+    if row.state == 'OPENED' or row.state == 'REWARD_PENDING' then
+        if row.receipt_id == open_receipt_id then
+            return result_ok({
+                already_opened = true,
+                interactable_id = interactable.id,
+                state = row.state,
+                chest_event = nil,
+            })
+        end
+        return fail(
+            WorldErrorCodes.WORLD_INTERACTABLE_UNAVAILABLE,
+            'CHEST_ALREADY_OPENED',
+            {
+                interactable_id = interactable.id,
+                state = row.state,
+            }
+        )
+    end
+    if row.state ~= 'AVAILABLE' then
+        return fail(
+            WorldErrorCodes.WORLD_INTERACTABLE_UNAVAILABLE,
+            'CHEST_NOT_AVAILABLE',
+            {
+                interactable_id = interactable.id,
+                state = row.state,
+            }
+        )
+    end
+
+    -- V0: no economy grant yet; OPENED is the durable consume fact.
+    local terminal_state = 'OPENED'
+    local chest_event = WorldEvents.build_chest_opened(
+        state,
+        interactable,
+        open_receipt_id,
+        terminal_state
+    )
+    if not chest_event.ok then
+        return chest_event
+    end
+    if state.event_receipts[chest_event.value.event_id] ~= nil then
+        return fail(
+            WorldErrorCodes.WORLD_RECEIPT_CONFLICT,
+            'CHEST_EVENT_ALREADY_USED',
+            { event_id = chest_event.value.event_id }
+        )
+    end
+
+    row.state = terminal_state
+    row.receipt_id = open_receipt_id
+    state.world_revision = state.world_revision + 1
+    state.event_receipts[chest_event.value.event_id] = {
+        event_id = chest_event.value.event_id,
+        event_type = chest_event.value.event_type,
+        receipt_id = open_receipt_id,
+    }
+    if type_value(command_id) == 'string' and command_id ~= '' then
+        state.command_receipts[command_id] = {
+            command_id = command_id,
+            kind = 'OPEN_CHEST',
+            interactable_id = interactable.id,
+            receipt_id = open_receipt_id,
+        }
+    end
+
+    return result_ok({
+        already_opened = false,
+        interactable_id = interactable.id,
+        state = terminal_state,
+        reward_id = interactable.action_ref_id,
+        chest_event = chest_event.value,
+        world_revision = state.world_revision,
+    })
+end
+
+function WorldState.resolve_search(state, catalog, input)
+    if type_value(state) ~= 'table' or get_metatable(state) ~= nil then
+        return invalid('STATE_REQUIRED')
+    end
+    if type_value(catalog) ~= 'table' then
+        return invalid('CATALOG_REQUIRED')
+    end
+    if type_value(input) ~= 'table' or get_metatable(input) ~= nil then
+        return invalid('INPUT_REQUIRED')
+    end
+
+    local interactable_id = raw_get(input, 'interactable_id')
+    local search_receipt_id = raw_get(input, 'search_receipt_id')
+    local command_id = raw_get(input, 'command_id')
+
+    local receipt_check = validate_derived(search_receipt_id, 'search_receipt_id')
+    if not receipt_check.ok then
+        return invalid('SEARCH_RECEIPT_INVALID')
+    end
+
+    if type_value(command_id) == 'string' and command_id ~= '' then
+        local prior = state.command_receipts[command_id]
+        if prior ~= nil and prior.kind == 'RESOLVE_SEARCH' then
+            return result_ok({
+                already_resolved = true,
+                command_replay = true,
+                interactable_id = prior.interactable_id,
+                search_event = nil,
+                flag_event = nil,
+            })
+        end
+    end
+
+    local interactable = catalog:require_interactable(interactable_id)
+    if not interactable.ok then
+        return interactable
+    end
+    interactable = interactable.value
+    if interactable.interactable_type ~= 'SEARCH' then
+        return fail(
+            WorldErrorCodes.WORLD_INTERACTABLE_TYPE_MISMATCH,
+            'SEARCH_REQUIRED',
+            {
+                interactable_id = interactable.id,
+                interactable_type = interactable.interactable_type,
+            }
+        )
+    end
+
+    local row = ensure_interactable_row(state, interactable)
+    if row.state == 'COMPLETED' or row.state == 'REWARD_PENDING' then
+        if row.receipt_id == search_receipt_id then
+            return result_ok({
+                already_resolved = true,
+                interactable_id = interactable.id,
+                state = row.state,
+                search_event = nil,
+                flag_event = nil,
+            })
+        end
+        return fail(
+            WorldErrorCodes.WORLD_INTERACTABLE_UNAVAILABLE,
+            'SEARCH_ALREADY_RESOLVED',
+            {
+                interactable_id = interactable.id,
+                state = row.state,
+            }
+        )
+    end
+    if row.state ~= 'AVAILABLE' then
+        return fail(
+            WorldErrorCodes.WORLD_INTERACTABLE_UNAVAILABLE,
+            'SEARCH_NOT_AVAILABLE',
+            {
+                interactable_id = interactable.id,
+                state = row.state,
+            }
+        )
+    end
+
+    local search_event = WorldEvents.build_search_resolved(
+        state,
+        interactable,
+        search_receipt_id
+    )
+    if not search_event.ok then
+        return search_event
+    end
+    if state.event_receipts[search_event.value.event_id] ~= nil then
+        return fail(
+            WorldErrorCodes.WORLD_RECEIPT_CONFLICT,
+            'SEARCH_EVENT_ALREADY_USED',
+            { event_id = search_event.value.event_id }
+        )
+    end
+
+    local flag_event = nil
+    if interactable.result_type == 'FLAG' and interactable.flag_id ~= nil then
+        local flag_receipt_id = raw_get(input, 'flag_receipt_id') or search_receipt_id
+        local set = WorldState.set_flag(state, catalog, {
+            flag_id = interactable.flag_id,
+            value = interactable.flag_value,
+            flag_receipt_id = flag_receipt_id,
+            reason = 'SEARCH_RESULT',
+        })
+        if not set.ok then
+            return set
+        end
+        flag_event = set.value.flag_event
+    end
+
+    row.state = 'COMPLETED'
+    row.receipt_id = search_receipt_id
+    -- set_flag may have already bumped revision; search completion still counts once more.
+    state.world_revision = state.world_revision + 1
+    state.event_receipts[search_event.value.event_id] = {
+        event_id = search_event.value.event_id,
+        event_type = search_event.value.event_type,
+        receipt_id = search_receipt_id,
+    }
+    if type_value(command_id) == 'string' and command_id ~= '' then
+        state.command_receipts[command_id] = {
+            command_id = command_id,
+            kind = 'RESOLVE_SEARCH',
+            interactable_id = interactable.id,
+            receipt_id = search_receipt_id,
+        }
+    end
+
+    return result_ok({
+        already_resolved = false,
+        interactable_id = interactable.id,
+        state = 'COMPLETED',
+        result_type = interactable.result_type,
+        result_ref = interactable.result_ref_id,
+        search_event = search_event.value,
+        flag_event = flag_event,
+        world_revision = state.world_revision,
+    })
 end
 
 return WorldState

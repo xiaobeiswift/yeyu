@@ -19,6 +19,7 @@ local validate_derived = RuntimeId.validate_derived
 local CURRENT_SCHEMA_VERSION = 1
 local MAX_DISCOVERED = 512
 local MAX_FLAGS = 512
+local MAX_INTERACTABLES = 1024
 local MAX_EVENT_RECEIPTS = 2048
 local MAX_SAFE_INTEGER = 9007199254740991
 
@@ -28,6 +29,7 @@ local BUNDLE_FIELDS = {
     world_discovered_locations = true,
     world_flags = true,
     world_event_receipts = true,
+    world_interactable_states = true,
 }
 local METADATA_FIELDS = {
     schema_version = true,
@@ -52,6 +54,11 @@ local FLAG_FIELDS = {
 local EVENT_FIELDS = {
     event_id = true,
     event_type = true,
+    receipt_id = true,
+}
+local INTERACTABLE_FIELDS = {
+    interactable_id = true,
+    state = true,
     receipt_id = true,
 }
 
@@ -170,6 +177,21 @@ function WorldSaveCodec.encode(state)
         }
     end
 
+    local interactable_keys = sorted_keys(state.interactables or {})
+    if #interactable_keys > MAX_INTERACTABLES then
+        return limit_exceeded('INTERACTABLE_LIMIT', { count = #interactable_keys })
+    end
+    local interactable_rows = {}
+    for index = 1, #interactable_keys do
+        local key = interactable_keys[index]
+        local row = state.interactables[key]
+        interactable_rows[index] = {
+            interactable_id = row.interactable_id or key,
+            state = row.state,
+            receipt_id = row.receipt_id,
+        }
+    end
+
     return result_ok({
         world_metadata = {
             schema_version = CURRENT_SCHEMA_VERSION,
@@ -179,6 +201,7 @@ function WorldSaveCodec.encode(state)
         world_discovered_locations = discovered_rows,
         world_flags = flag_rows,
         world_event_receipts = event_rows,
+        world_interactable_states = interactable_rows,
     })
 end
 
@@ -325,6 +348,37 @@ function WorldSaveCodec.decode(bundle)
         state.event_receipts[row.event_id] = {
             event_id = row.event_id,
             event_type = row.event_type,
+            receipt_id = row.receipt_id,
+        }
+    end
+
+    local interactables = bundle.world_interactable_states or {}
+    for index = 1, #interactables do
+        local row = interactables[index]
+        unknown = no_unknown_fields(
+            row,
+            INTERACTABLE_FIELDS,
+            'world_interactable_states[' .. index .. ']'
+        )
+        if unknown ~= nil then
+            return unknown
+        end
+        local id_check = validate_content(row.interactable_id, 'interact_', 'interactable_id')
+        if not id_check.ok then
+            return invalid('INTERACTABLE_ID_INVALID')
+        end
+        if type_value(row.state) ~= 'string' or row.state == '' then
+            return invalid('INTERACTABLE_STATE_INVALID')
+        end
+        if row.receipt_id ~= nil then
+            local receipt_check = validate_derived(row.receipt_id, 'receipt_id')
+            if not receipt_check.ok then
+                return invalid('INTERACTABLE_RECEIPT_INVALID')
+            end
+        end
+        state.interactables[row.interactable_id] = {
+            interactable_id = row.interactable_id,
+            state = row.state,
             receipt_id = row.receipt_id,
         }
     end

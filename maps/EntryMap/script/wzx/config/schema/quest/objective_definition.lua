@@ -42,6 +42,8 @@ local OBJECTIVE_TYPES = {
     REACH_LOCATION = true,
     ACQUIRE_ITEM = true,
     OWN_ITEM = true,
+    OPEN_CHEST = true,
+    SEARCH_POINT = true,
 }
 local PROGRESS_SEMANTICS = {
     ACCUMULATE_AFTER_ACCEPT = true,
@@ -54,6 +56,8 @@ local EVENT_TYPES = {
     DialogueCompleted = true,
     LocationDiscovered = true,
     ItemGranted = true,
+    ChestOpened = true,
+    SearchPointResolved = true,
 }
 local TARGET_PREFIX = {
     COMPLETE_ENCOUNTER = 'encounter_',
@@ -62,6 +66,8 @@ local TARGET_PREFIX = {
     REACH_LOCATION = 'location_',
     ACQUIRE_ITEM = 'item_',
     OWN_ITEM = 'item_',
+    OPEN_CHEST = 'interact_',
+    SEARCH_POINT = 'interact_',
 }
 
 function ObjectiveDefinition.validate(value)
@@ -154,6 +160,8 @@ function ObjectiveDefinition.validate(value)
     if value.objective_type == 'COMPLETE_ENCOUNTER'
         or value.objective_type == 'TALK'
         or value.objective_type == 'REACH_LOCATION'
+        or value.objective_type == 'OPEN_CHEST'
+        or value.objective_type == 'SEARCH_POINT'
     then
         if value.progress_semantics ~= 'ONCE_FACT'
             and value.progress_semantics ~= 'ACCUMULATE_AFTER_ACCEPT'

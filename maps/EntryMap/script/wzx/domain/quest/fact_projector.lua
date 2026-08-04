@@ -141,6 +141,26 @@ function FactProjector.project(objective, event)
         return result_ok(projected)
     end
 
+    if objective.objective_type == 'OPEN_CHEST' then
+        local interactable_id = raw_get(payload, 'interactable_id')
+        if objective.target_id ~= nil and interactable_id ~= objective.target_id then
+            return result_ok({ matched = false, reason = 'INTERACTABLE_MISMATCH' })
+        end
+        local projected = once_complete(objective)
+        projected.matched = true
+        return result_ok(projected)
+    end
+
+    if objective.objective_type == 'SEARCH_POINT' then
+        local interactable_id = raw_get(payload, 'interactable_id')
+        if objective.target_id ~= nil and interactable_id ~= objective.target_id then
+            return result_ok({ matched = false, reason = 'INTERACTABLE_MISMATCH' })
+        end
+        local projected = once_complete(objective)
+        projected.matched = true
+        return result_ok(projected)
+    end
+
     if objective.objective_type == 'ACQUIRE_ITEM' then
         local item_id = raw_get(payload, 'item_id')
         local amount = raw_get(payload, 'amount') or 0

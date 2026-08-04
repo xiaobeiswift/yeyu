@@ -90,6 +90,30 @@ local function fixture_world_source(mutate)
                 entry_marker_id = 'marker_mist_ridge',
             },
         },
+        interactable_definitions = {
+            {
+                id = 'interact_inn_chest',
+                schema_version = 1,
+                rules_version = 1,
+                interactable_type = 'CHEST',
+                location_id = 'location_wutan_inn',
+                marker_id = 'marker_inn_chest',
+                action_ref_id = 'reward_inn_chest',
+                prompt_key = 'prompt.open_chest',
+            },
+            {
+                id = 'interact_ridge_search',
+                schema_version = 1,
+                rules_version = 1,
+                interactable_type = 'SEARCH',
+                location_id = 'location_mist_ridge',
+                marker_id = 'marker_ridge_search',
+                result_type = 'FLAG',
+                flag_id = 'flag_bridge_repaired',
+                flag_value = true,
+                prompt_key = 'prompt.search_ridge',
+            },
+        },
     }
     if mutate ~= nil then
         mutate(source)
@@ -276,11 +300,14 @@ return {
             section_owners = owners.value,
         })
         assert.equal(registered.ok, true)
-        assert.equal(registered.value, 5)
+        assert.equal(registered.value, 6)
         local section = owners.value:get('world_position')
         assert.equal(section.ok, true)
         assert.equal(section.value.owner_system, '12')
         assert.equal(section.value.slot_id, 2)
+        local interact_section = owners.value:get('world_interactable_states')
+        assert.equal(interact_section.ok, true)
+        assert.equal(interact_section.value.owner_system, '12')
     end),
 
     case('service with store discovers and persists', function()
@@ -356,5 +383,159 @@ return {
         assert.equal(again.ok, true)
         assert.equal(again.value.duplicate, true)
         assert.equal(again.value.applied, false)
+    end),
+
+    case('open chest publishes event and rejects second open', function()
+        local sealed = seal_world()
+        assert.equal(sealed.ok, true)
+        local state = WorldState.empty()
+        local opened = WorldState.open_chest(state, sealed.value, {
+            interactable_id = 'interact_inn_chest',
+            open_receipt_id = 'rcpt_open_chest_01',
+            command_id = 'cmd_open_chest_01',
+        })
+        assert.equal(opened.ok, true, 'open')
+        assert.equal(opened.value.state, 'OPENED')
+        assert.equal(opened.value.reward_id, 'reward_inn_chest')
+        assert.truthy(opened.value.chest_event)
+        assert.equal(opened.value.chest_event.event_type, 'ChestOpened')
+        assert.equal(DomainEvent.validate(opened.value.chest_event).ok, true)
+
+        local again = WorldState.open_chest(state, sealed.value, {
+            interactable_id = 'interact_inn_chest',
+            open_receipt_id = 'rcpt_open_chest_02',
+        })
+        assert.equal(again.ok, false)
+        assert.equal(again.error.code, 'WORLD_INTERACTABLE_UNAVAILABLE')
+
+        local replay = WorldState.open_chest(state, sealed.value, {
+            interactable_id = 'interact_inn_chest',
+            open_receipt_id = 'rcpt_open_chest_01',
+            command_id = 'cmd_open_chest_01',
+        })
+        assert.equal(replay.ok, true)
+        assert.equal(replay.value.command_replay, true)
+    end),
+
+    case('resolve search sets flag and publishes SearchPointResolved', function()
+        local sealed = seal_world()
+        local state = WorldState.empty()
+        local resolved = WorldState.resolve_search(state, sealed.value, {
+            interactable_id = 'interact_ridge_search',
+            search_receipt_id = 'rcpt_search_ridge_01',
+        })
+        assert.equal(resolved.ok, true, 'search')
+        assert.equal(resolved.value.state, 'COMPLETED')
+        assert.equal(resolved.value.result_type, 'FLAG')
+        assert.equal(resolved.value.search_event.event_type, 'SearchPointResolved')
+        assert.equal(DomainEvent.validate(resolved.value.search_event).ok, true)
+        assert.truthy(resolved.value.flag_event)
+        assert.equal(state.flags.flag_bridge_repaired, true)
+
+        local again = WorldState.resolve_search(state, sealed.value, {
+            interactable_id = 'interact_ridge_search',
+            search_receipt_id = 'rcpt_search_ridge_02',
+        })
+        assert.equal(again.ok, false)
+        assert.equal(again.error.code, 'WORLD_INTERACTABLE_UNAVAILABLE')
+    end),
+
+    case('save codec round-trips interactable states', function()
+        local sealed = seal_world()
+        local state = WorldState.empty()
+        WorldState.open_chest(state, sealed.value, {
+            interactable_id = 'interact_inn_chest',
+            open_receipt_id = 'rcpt_open_save_01',
+        })
+        WorldState.resolve_search(state, sealed.value, {
+            interactable_id = 'interact_ridge_search',
+            search_receipt_id = 'rcpt_search_save_01',
+        })
+        local encoded = WorldSaveCodec.encode(state)
+        assert.equal(encoded.ok, true)
+        assert.equal(#encoded.value.world_interactable_states, 2)
+        local decoded = WorldSaveCodec.decode(encoded.value)
+        assert.equal(decoded.ok, true)
+        assert.equal(decoded.value.interactables.interact_inn_chest.state, 'OPENED')
+        assert.equal(decoded.value.interactables.interact_ridge_search.state, 'COMPLETED')
+    end),
+
+    case('bridge open chest advances quest OPEN_CHEST objective', function()
+        local world_sealed = seal_world()
+        local quest_sealed = QuestCatalog.seal({
+            objective_definitions = {
+                {
+                    id = 'objective_open_chest',
+                    schema_version = 1,
+                    rules_version = 1,
+                    stage_id = 'stage_side_01',
+                    objective_type = 'OPEN_CHEST',
+                    target_id = 'interact_inn_chest',
+                    required_count = 1,
+                    progress_semantics = 'ONCE_FACT',
+                    event_type = 'ChestOpened',
+                    description_key = 'obj.open_chest.desc',
+                    completed_key = 'obj.open_chest.done',
+                },
+            },
+            stage_definitions = {
+                {
+                    id = 'stage_side_01',
+                    schema_version = 1,
+                    rules_version = 1,
+                    quest_id = 'quest_side_chest',
+                    objective_ids = { 'objective_open_chest' },
+                    completion_mode = 'ALL',
+                    journal_text_key = 'stage.side_01',
+                },
+            },
+            quest_definitions = {
+                {
+                    id = 'quest_side_chest',
+                    schema_version = 1,
+                    definition_version = 1,
+                    rules_version = 1,
+                    category = 'SIDE',
+                    chapter_id = 'chapter_01',
+                    title_key = 'quest.side_chest.title',
+                    summary_key = 'quest.side_chest.summary',
+                    accept_policy = 'MANUAL_NPC',
+                    accept_ref_id = 'npc_villager',
+                    first_stage_id = 'stage_side_01',
+                    stage_ids = { 'stage_side_01' },
+                    reward_policy = 'NO_REWARD',
+                    abandon_policy = 'ALLOW_RESET_RUN',
+                    journal_sort_order = 40,
+                },
+            },
+        })
+        assert.equal(world_sealed.ok, true)
+        assert.equal(quest_sealed.ok, true)
+
+        local world = WorldService.bind({ catalog = world_sealed.value })
+        local quest = QuestService.bind({ catalog = quest_sealed.value })
+        assert.equal(world.ok, true)
+        assert.equal(quest.ok, true)
+        quest.value:accept({
+            quest_id = 'quest_side_chest',
+            run_id = 'qrun_chest_01',
+            accept_receipt_id = 'rcpt_accept_chest_01',
+        })
+
+        local bundled = WorldQuestBridge.open_chest_and_relay(
+            world.value,
+            quest.value,
+            {
+                interactable_id = 'interact_inn_chest',
+                open_receipt_id = 'rcpt_open_bridge_01',
+            }
+        )
+        assert.equal(bundled.ok, true, 'open_chest_and_relay')
+        assert.equal(bundled.value.quest_relay.applied, true)
+
+        local run_view = quest.value:get_run('qrun_chest_01')
+        assert.equal(run_view.ok, true)
+        assert.equal(run_view.value.run.status, 'READY_TO_TURN_IN')
+        assert.equal(run_view.value.objectives[1].status, 'COMPLETE')
     end),
 }
