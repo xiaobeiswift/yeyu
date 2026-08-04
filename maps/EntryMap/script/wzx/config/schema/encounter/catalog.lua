@@ -8,6 +8,8 @@ local EnemyStatProfile = require 'wzx.config.schema.encounter.enemy_stat_profile
 local EnemyMoveSet = require 'wzx.config.schema.encounter.enemy_move_set'
 local EnemyDefinition = require 'wzx.config.schema.encounter.enemy_definition'
 local WaveDefinition = require 'wzx.config.schema.encounter.wave_definition'
+local BossPhaseDefinition = require 'wzx.config.schema.encounter.boss_phase_definition'
+local BossControllerDefinition = require 'wzx.config.schema.encounter.boss_controller_definition'
 local EncounterDefinition = require 'wzx.config.schema.encounter.encounter_definition'
 
 local Catalog = {}
@@ -37,6 +39,8 @@ local COLLECTION_ORDER = {
     'enemy_move_sets',
     'enemy_definitions',
     'wave_definitions',
+    'boss_phase_definitions',
+    'boss_controller_definitions',
     'encounter_definitions',
 }
 local COLLECTION_FIELDS = {
@@ -44,6 +48,8 @@ local COLLECTION_FIELDS = {
     enemy_move_sets = true,
     enemy_definitions = true,
     wave_definitions = true,
+    boss_phase_definitions = true,
+    boss_controller_definitions = true,
     encounter_definitions = true,
 }
 local COLLECTION_SPECS = {
@@ -62,6 +68,14 @@ local COLLECTION_SPECS = {
     wave_definitions = {
         registry_name = 'wave_definitions',
         normalize_entry = WaveDefinition.validate,
+    },
+    boss_phase_definitions = {
+        registry_name = 'boss_phase_definitions',
+        normalize_entry = BossPhaseDefinition.validate,
+    },
+    boss_controller_definitions = {
+        registry_name = 'boss_controller_definitions',
+        normalize_entry = BossControllerDefinition.validate,
     },
     encounter_definitions = {
         registry_name = 'encounter_definitions',
@@ -137,6 +151,14 @@ local function validate_cross_references(registries)
     if not waves.ok then
         return waves
     end
+    local phases = registries.boss_phase_definitions:list()
+    if not phases.ok then
+        return phases
+    end
+    local controllers = registries.boss_controller_definitions:list()
+    if not controllers.ok then
+        return controllers
+    end
     local encounters = registries.encounter_definitions:list()
     if not encounters.ok then
         return encounters
@@ -205,6 +227,50 @@ local function validate_cross_references(registries)
         end
     end
 
+    for index = 1, #controllers.value do
+        local controller = controllers.value[index]
+        local phase_index
+        local previous_hp_threshold = nil
+        for phase_index = 1, #controller.phase_ids do
+            local phase_id = controller.phase_ids[phase_index]
+            local phase = registries.boss_phase_definitions:get(phase_id)
+            if not phase.ok then
+                return invalid('phase_ids', 'REFERENCE_NOT_FOUND', {
+                    controller_id = controller.id,
+                    reference_id = phase_id,
+                    index = phase_index,
+                })
+            end
+            if phase.value.phase_index ~= phase_index then
+                return invalid('phase_ids', 'PHASE_INDEX_NOT_SEQUENTIAL', {
+                    controller_id = controller.id,
+                    phase_id = phase_id,
+                    expected_index = phase_index,
+                    actual_index = phase.value.phase_index,
+                })
+            end
+            if phase.value.rules_version ~= controller.rules_version then
+                return invalid('rules_version', 'PHASE_RULES_MISMATCH', {
+                    controller_id = controller.id,
+                    phase_id = phase_id,
+                })
+            end
+            if phase.value.trigger == 'HP_AT_OR_BELOW_BP' then
+                if previous_hp_threshold ~= nil
+                    and phase.value.trigger_value >= previous_hp_threshold
+                then
+                    return invalid('trigger_value', 'HP_THRESHOLD_NOT_DECREASING', {
+                        controller_id = controller.id,
+                        phase_id = phase_id,
+                        trigger_value = phase.value.trigger_value,
+                        previous = previous_hp_threshold,
+                    })
+                end
+                previous_hp_threshold = phase.value.trigger_value
+            end
+        end
+    end
+
     for index = 1, #encounters.value do
         local encounter = encounters.value[index]
         local wave_index
@@ -230,6 +296,48 @@ local function validate_cross_references(registries)
                 return invalid('rules_version', 'WAVE_RULES_MISMATCH', {
                     encounter_id = encounter.id,
                     wave_id = wave_id,
+                })
+            end
+        end
+        if encounter.boss_controller_id ~= nil then
+            local controller = registries.boss_controller_definitions:get(
+                encounter.boss_controller_id
+            )
+            if not controller.ok then
+                return invalid('boss_controller_id', 'REFERENCE_NOT_FOUND', {
+                    encounter_id = encounter.id,
+                    reference_id = encounter.boss_controller_id,
+                })
+            end
+            if controller.value.rules_version ~= encounter.rules_version then
+                return invalid('rules_version', 'BOSS_CONTROLLER_RULES_MISMATCH', {
+                    encounter_id = encounter.id,
+                    controller_id = encounter.boss_controller_id,
+                })
+            end
+            local spawn_found = false
+            for wave_index = 1, #encounter.wave_ids do
+                local wave = registries.wave_definitions:get(encounter.wave_ids[wave_index])
+                if wave.ok then
+                    local row_index
+                    for row_index = 1, #wave.value.spawn_rows do
+                        if wave.value.spawn_rows[row_index].spawn_id
+                            == controller.value.boss_spawn_id
+                        then
+                            spawn_found = true
+                            break
+                        end
+                    end
+                end
+                if spawn_found then
+                    break
+                end
+            end
+            if not spawn_found then
+                return invalid('boss_spawn_id', 'BOSS_SPAWN_NOT_IN_ENCOUNTER_WAVES', {
+                    encounter_id = encounter.id,
+                    controller_id = encounter.boss_controller_id,
+                    boss_spawn_id = controller.value.boss_spawn_id,
                 })
             end
         end
@@ -409,6 +517,81 @@ function CatalogView:require_move_set(move_set_id)
         )
     end
     return found
+end
+
+function CatalogView:require_boss_controller(controller_id)
+    local state = STATES[self]
+    if state == nil then
+        return catalog_error(
+            EncounterErrorCodes.ENCOUNTER_ARGUMENT_INVALID,
+            'error.encounter.catalog_authority_required',
+            'CATALOG_AUTHORITY_REQUIRED'
+        )
+    end
+    local checked = validate_content_id(controller_id, 'bossctl_', 'boss_controller_id')
+    if not checked.ok then
+        return catalog_error(
+            EncounterErrorCodes.ENCOUNTER_ARGUMENT_INVALID,
+            'error.encounter.boss_controller_id_invalid',
+            'BOSS_CONTROLLER_ID_INVALID',
+            { field = 'boss_controller_id' }
+        )
+    end
+    local found = state.registries.boss_controller_definitions:get(controller_id)
+    if not found.ok then
+        return catalog_error(
+            EncounterErrorCodes.ENCOUNTER_BOSS_CONTROLLER_UNKNOWN,
+            'error.encounter.boss_controller_unknown',
+            'BOSS_CONTROLLER_UNKNOWN',
+            { boss_controller_id = controller_id }
+        )
+    end
+    return found
+end
+
+function CatalogView:require_boss_phase(phase_id)
+    local state = STATES[self]
+    if state == nil then
+        return catalog_error(
+            EncounterErrorCodes.ENCOUNTER_ARGUMENT_INVALID,
+            'error.encounter.catalog_authority_required',
+            'CATALOG_AUTHORITY_REQUIRED'
+        )
+    end
+    local found = state.registries.boss_phase_definitions:get(phase_id)
+    if not found.ok then
+        return catalog_error(
+            EncounterErrorCodes.ENCOUNTER_BOSS_PHASE_UNKNOWN,
+            'error.encounter.boss_phase_unknown',
+            'BOSS_PHASE_UNKNOWN',
+            { boss_phase_id = phase_id }
+        )
+    end
+    return found
+end
+
+function CatalogView:build_boss_runtime(controller_id, boss_actor_id, move_library)
+    local controller = self:require_boss_controller(controller_id)
+    if not controller.ok then
+        return controller
+    end
+    controller = controller.value
+    local phases = {}
+    local index
+    for index = 1, #controller.phase_ids do
+        local phase = self:require_boss_phase(controller.phase_ids[index])
+        if not phase.ok then
+            return phase
+        end
+        phases[index] = phase.value
+    end
+    local BossPhase = require 'wzx.domain.encounter.boss_phase'
+    return BossPhase.create_runtime({
+        controller = controller,
+        phases = phases,
+        boss_actor_id = boss_actor_id,
+        move_library = move_library,
+    })
 end
 
 function Catalog.seal(source)

@@ -219,6 +219,70 @@ function MartialLoadoutRuntime.select_auto_move(actor)
     return nil, 'NO_MOVE'
 end
 
+--- Remove active moves by id set. Basic move is never removed.
+function MartialLoadoutRuntime.remove_active_moves(loadout, remove_ids)
+    if type_value(loadout) ~= 'table' or type_value(remove_ids) ~= 'table' then
+        return 0
+    end
+    local remove_set = {}
+    local index
+    for index = 1, #remove_ids do
+        remove_set[remove_ids[index]] = true
+    end
+    local kept = {}
+    local removed = 0
+    for index = 1, #(loadout.active_moves or {}) do
+        local move = loadout.active_moves[index]
+        if remove_set[move.move_id] then
+            removed = removed + 1
+        else
+            kept[#kept + 1] = move
+        end
+    end
+    loadout.active_moves = kept
+    return removed
+end
+
+--- Append active moves from library. Duplicates by move_id are ignored.
+function MartialLoadoutRuntime.add_active_moves(loadout, add_ids, move_library)
+    if type_value(loadout) ~= 'table' or type_value(add_ids) ~= 'table' then
+        return 0, {}
+    end
+    if type_value(move_library) ~= 'table' then
+        move_library = {}
+    end
+    local existing = {}
+    local index
+    for index = 1, #(loadout.active_moves or {}) do
+        existing[loadout.active_moves[index].move_id] = true
+    end
+    if loadout.basic_move ~= nil then
+        existing[loadout.basic_move.move_id] = true
+    end
+    local added = 0
+    local missing = {}
+    for index = 1, #add_ids do
+        local move_id = add_ids[index]
+        if existing[move_id] ~= true then
+            local source = move_library[move_id]
+            local move = normalize_move(source, 'ACTIVE', move_id, false)
+            if move == nil then
+                missing[#missing + 1] = move_id
+            else
+                move.move_type = 'ACTIVE'
+                move.move_id = move_id
+                loadout.active_moves[#loadout.active_moves + 1] = move
+                existing[move_id] = true
+                added = added + 1
+            end
+        end
+    end
+    table_sort(loadout.active_moves, function(left, right)
+        return bytewise_string_less(left.move_id, right.move_id)
+    end)
+    return added, missing
+end
+
 --- List all move_ids known to this loadout (for diagnostics / cooldown tick).
 function MartialLoadoutRuntime.list_move_ids(loadout)
     local ids = {}

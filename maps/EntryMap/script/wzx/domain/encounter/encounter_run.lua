@@ -7,6 +7,7 @@ local CombatSnapshot = require 'wzx.domain.contracts.combat_snapshot'
 local Rules = require 'wzx.domain.combat.rules'
 local EnemyBuilder = require 'wzx.domain.encounter.enemy_builder'
 local WaveController = require 'wzx.domain.encounter.wave_controller'
+local BossPhase = require 'wzx.domain.encounter.boss_phase'
 local EncounterErrorCodes = require 'wzx.domain.encounter.error_codes'
 
 local EncounterRun = {}
@@ -283,6 +284,73 @@ local function make_combat_id(run_id, wave_index)
     return result_ok(combat_id)
 end
 
+local function collect_move_library(catalog)
+    local library = {}
+    if type_value(catalog.list) ~= 'function' then
+        return library
+    end
+    local listed = catalog:list('enemy_move_sets')
+    if not listed.ok then
+        return library
+    end
+    local index
+    for index = 1, #listed.value do
+        local move_set = listed.value[index]
+        if move_set.basic_move ~= nil then
+            library[move_set.basic_move.move_id] = move_set.basic_move
+        end
+        local move_index
+        for move_index = 1, #(move_set.active_moves or {}) do
+            local move = move_set.active_moves[move_index]
+            library[move.move_id] = move
+        end
+    end
+    return library
+end
+
+local function wave_has_spawn(wave, spawn_id)
+    local index
+    for index = 1, #wave.spawn_rows do
+        if wave.spawn_rows[index].spawn_id == spawn_id then
+            return true
+        end
+    end
+    return false
+end
+
+local function build_boss_runtime_for_wave(catalog, encounter, run_id, wave)
+    if encounter.boss_controller_id == nil then
+        return result_ok(nil)
+    end
+    if type_value(catalog.require_boss_controller) ~= 'function' then
+        return result_ok(nil)
+    end
+    local controller = catalog:require_boss_controller(encounter.boss_controller_id)
+    if not controller.ok then
+        return controller
+    end
+    controller = controller.value
+    if not wave_has_spawn(wave, controller.boss_spawn_id) then
+        return result_ok(nil)
+    end
+    local boss_actor_id = run_id .. ':' .. controller.boss_spawn_id
+    local phases = {}
+    local index
+    for index = 1, #controller.phase_ids do
+        local phase = catalog:require_boss_phase(controller.phase_ids[index])
+        if not phase.ok then
+            return phase
+        end
+        phases[index] = phase.value
+    end
+    return BossPhase.create_runtime({
+        controller = controller,
+        phases = phases,
+        boss_actor_id = boss_actor_id,
+        move_library = collect_move_library(catalog),
+    })
+end
+
 local function build_wave_snapshot(run_ctx, wave, attackers, wave_index)
     local defenders = EnemyBuilder.build_wave_defenders(run_ctx.catalog, wave, {
         run_id = run_ctx.run_id,
@@ -476,6 +544,7 @@ function EncounterRun.prepare(catalog, input)
         action_limit = encounter.action_limit,
         event_budget = encounter.event_budget,
         root_seed = root_seed.value,
+        boss_controller_id = encounter.boss_controller_id,
     }
 
     local wave_bundle = build_wave_snapshot(
@@ -486,6 +555,16 @@ function EncounterRun.prepare(catalog, input)
     )
     if not wave_bundle.ok then
         return wave_bundle
+    end
+
+    local boss_runtime = build_boss_runtime_for_wave(
+        catalog,
+        encounter,
+        run_id,
+        first_wave.value
+    )
+    if not boss_runtime.ok then
+        return boss_runtime
     end
 
     local run = {
@@ -499,6 +578,8 @@ function EncounterRun.prepare(catalog, input)
         combat_id = wave_bundle.value.combat_id,
         combat_snapshot = wave_bundle.value.snapshot,
         actor_vitals = nil,
+        boss_controller_id = encounter.boss_controller_id,
+        boss_runtime = boss_runtime.value,
         wave_ids = copy_strings(encounter.wave_ids),
         wave_count = #encounter.wave_ids,
         wave_id = wave_bundle.value.wave_id,
@@ -547,6 +628,7 @@ function EncounterRun.activate_combat(run)
         combat_id = run.combat_id,
         snapshot = run.combat_snapshot,
         actor_vitals = copy_vitals_map(run.actor_vitals),
+        boss_runtime = run.boss_runtime,
         wave_index = run.wave_index,
         wave_id = run.wave_id,
         revision = run.revision,
@@ -824,11 +906,27 @@ function EncounterRun.advance_wave(run, catalog)
         return wave_bundle
     end
 
+    local boss_runtime = result_ok(nil)
+    if run.boss_controller_id ~= nil then
+        boss_runtime = build_boss_runtime_for_wave(
+            catalog,
+            {
+                boss_controller_id = run.boss_controller_id,
+            },
+            run.run_id,
+            next_wave.value
+        )
+        if not boss_runtime.ok then
+            return boss_runtime
+        end
+    end
+
     run.cleared_wave_ids[#run.cleared_wave_ids + 1] = cleared.wave_id
     run.attacker_members = carried.value.members
     run.actor_vitals = carried.value.actor_vitals
     run.combat_id = wave_bundle.value.combat_id
     run.combat_snapshot = wave_bundle.value.snapshot
+    run.boss_runtime = boss_runtime.value
     run.wave_id = wave_bundle.value.wave_id
     run.wave_index = next_index
     run.wave_seed = wave_bundle.value.wave_seed

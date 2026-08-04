@@ -408,6 +408,123 @@ local function check_victory(state)
     return false
 end
 
+local function apply_boss_phase_enter(state, transition)
+    local runtime = state.boss_runtime
+    local boss = state.actors[runtime.boss_actor_id]
+    local phase = transition.phase
+    if boss == nil or phase == nil then
+        return result_ok(true)
+    end
+
+    local removed = MartialLoadoutRuntime.remove_active_moves(
+        boss.martial_loadout,
+        phase.remove_move_ids
+    )
+    local added, missing = MartialLoadoutRuntime.add_active_moves(
+        boss.martial_loadout,
+        phase.add_move_ids,
+        runtime.move_library
+    )
+    if phase.ai_profile_override_id ~= nil then
+        boss.ai_profile_id = phase.ai_profile_override_id
+    end
+    if phase.immunity_profile_override_id ~= nil then
+        boss.immunity_profile_id = phase.immunity_profile_override_id
+    end
+
+    append_event(state, 'BossPhaseEntered', {
+        controller_id = runtime.controller_id,
+        boss_actor_id = runtime.boss_actor_id,
+        phase_id = phase.id,
+        phase_index = transition.phase_index,
+        trigger = phase.trigger,
+        trigger_value = phase.trigger_value,
+        hp_bp = transition.hp_bp,
+        presentation_cue_id = phase.presentation_cue_id,
+        added_move_count = added,
+        removed_move_count = removed,
+        missing_move_ids = missing,
+        ai_profile_id = boss.ai_profile_id,
+        on_enter_effect_bundle_id = phase.on_enter_effect_bundle_id,
+    })
+
+    if phase.on_enter_effect_bundle_id ~= nil
+        and state.effect_catalog ~= nil
+        and state.effect_runtime ~= nil
+    then
+        local pseudo_move = {
+            move_id = 'phase_enter:' .. phase.id,
+            effect_bundle_id = phase.on_enter_effect_bundle_id,
+        }
+        local effect_result = resolve_effect_bundle(
+            state,
+            boss,
+            pseudo_move,
+            { boss.actor_id }
+        )
+        if not effect_result.ok then
+            return effect_result
+        end
+    end
+    return result_ok(true)
+end
+
+-- Safe-boundary boss phase evaluation: enter at most one phase per try, loop for
+-- multi-threshold crossings; healing never rolls back entered phases.
+local function process_boss_phases(state)
+    local runtime = state.boss_runtime
+    if runtime == nil then
+        return result_ok({ entered_count = 0 })
+    end
+    local safety = 0
+    local entered_count = 0
+    while safety < (runtime.phase_event_budget or 64) do
+        safety = safety + 1
+        local boss = state.actors[runtime.boss_actor_id]
+        if boss == nil then
+            break
+        end
+        local boss_alive = boss.alive_state == 'ALIVE'
+        -- Duck-typed API from system 07 BossPhase.create_runtime (combat must not require encounter).
+        local try_enter = runtime.try_enter_next
+        if type_value(try_enter) ~= 'function' then
+            return invalid('BOSS_RUNTIME_API_MISSING')
+        end
+        local evaluated = try_enter(runtime, {
+            current_hp = boss.current_hp,
+            max_hp = boss.max_hp,
+            boss_alive = boss_alive,
+            action_index = state.action_index,
+            mechanic_flags = runtime.mechanic_flags,
+        })
+        if not evaluated.ok then
+            return evaluated
+        end
+        if evaluated.value.enraged then
+            append_event(state, 'BossEnraged', {
+                controller_id = runtime.controller_id,
+                boss_actor_id = runtime.boss_actor_id,
+                action_index = state.action_index,
+                enrage_action_index = runtime.enrage_action_index,
+            })
+        end
+        if not evaluated.value.entered then
+            break
+        end
+        entered_count = entered_count + 1
+        local applied = apply_boss_phase_enter(state, evaluated.value)
+        if not applied.ok then
+            return applied
+        end
+        -- Phase enter effects may kill the boss; stop phase chain and let victory check run.
+        boss = state.actors[runtime.boss_actor_id]
+        if boss == nil or boss.alive_state ~= 'ALIVE' then
+            break
+        end
+    end
+    return result_ok({ entered_count = entered_count })
+end
+
 local function apply_damage_to_actor(state, target, amount, source_actor_id, diagnostics)
     local old_hp = target.current_hp
     local new_hp = math_max(0, old_hp - amount)
@@ -712,6 +829,8 @@ function CombatAggregate.start(input)
         -- Optional effects bridge (05). Absent => effect_bundle_id ignored.
         effect_catalog = nil,
         effect_runtime = nil,
+        -- Optional system 07 boss phase runtime.
+        boss_runtime = nil,
     }
 
     local effect_catalog = raw_get(input, 'effect_catalog')
@@ -733,18 +852,56 @@ function CombatAggregate.start(input)
         state.effect_runtime = runtime_result.value
     end
 
+    local boss_runtime = raw_get(input, 'boss_runtime')
+    if boss_runtime ~= nil then
+        if type_value(boss_runtime) ~= 'table' or get_metatable(boss_runtime) ~= nil then
+            return invalid('BOSS_RUNTIME_INVALID')
+        end
+        if type_value(boss_runtime.boss_actor_id) ~= 'string'
+            or actors[boss_runtime.boss_actor_id] == nil
+        then
+            return invalid('BOSS_ACTOR_UNKNOWN', {
+                boss_actor_id = boss_runtime.boss_actor_id,
+            })
+        end
+        if type_value(boss_runtime.phases) ~= 'table' or #boss_runtime.phases < 1 then
+            return invalid('BOSS_PHASES_REQUIRED')
+        end
+        state.boss_runtime = boss_runtime
+    end
+
     append_event(state, 'CombatCreated', {
         combat_kind = snapshot.combat_kind,
         control_policy = snapshot.control_policy,
         seed = snapshot.seed,
         action_limit = action_limit,
         effect_bridge = state.effect_catalog ~= nil,
+        boss_bridge = state.boss_runtime ~= nil,
     })
     append_event(state, 'CombatStarted', {
         attacker_count = #snapshot.attacker_formation.members,
         defender_count = #snapshot.defender_formation.members,
         tie_preferred_side = state.tie_preferred_side,
     })
+
+    if state.boss_runtime ~= nil then
+        local phase1 = state.boss_runtime.phases[1]
+        append_event(state, 'BossPhaseEntered', {
+            controller_id = state.boss_runtime.controller_id,
+            boss_actor_id = state.boss_runtime.boss_actor_id,
+            phase_id = phase1 and phase1.id or nil,
+            phase_index = 1,
+            trigger = 'INITIAL',
+            trigger_value = nil,
+            hp_bp = 10000,
+            presentation_cue_id = phase1 and phase1.presentation_cue_id or nil,
+            added_move_count = 0,
+            removed_move_count = 0,
+            missing_move_ids = {},
+            ai_profile_id = actors[state.boss_runtime.boss_actor_id].ai_profile_id,
+            on_enter_effect_bundle_id = nil,
+        })
+    end
 
     if check_victory(state) then
         return result_ok(state)
@@ -888,6 +1045,17 @@ function CombatAggregate.apply_command(state, command)
             finish(state, 'INVALID_RULE_EXECUTION', action.error.details.reason or 'ACTION_FAILED')
             break
         end
+        -- Boss phases evaluate only at post-action safe boundaries.
+        local boss_step = process_boss_phases(state)
+        if not boss_step.ok then
+            finish(
+                state,
+                'INVALID_RULE_EXECUTION',
+                (boss_step.error.details and boss_step.error.details.reason)
+                    or 'BOSS_PHASE_FAILED'
+            )
+            break
+        end
         if check_victory(state) then
             break
         end
@@ -931,12 +1099,23 @@ function CombatAggregate.get_public_view(state)
             speed = actor.speed,
         }
     end
+    local boss_view = nil
+    if state.boss_runtime ~= nil then
+        local get_view = state.boss_runtime.get_public_view
+        if type_value(get_view) == 'function' then
+            local viewed = get_view(state.boss_runtime)
+            if viewed.ok then
+                boss_view = viewed.value
+            end
+        end
+    end
     return result_ok({
         combat_id = state.combat_id,
         phase = state.phase,
         revision = state.revision,
         action_index = state.action_index,
         current_tick = state.current_tick,
+        boss = boss_view,
         control_policy = state.control_policy,
         actors = actors,
         result = state.result,
