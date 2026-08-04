@@ -614,10 +614,53 @@ function CombatAggregate.start(input)
 
     local actors = {}
     local actor_order = {}
+    -- Optional carry-over vitals for multi-wave encounters:
+    -- { [actor_id] = { current_hp = n, current_qi = n } }
+    local actor_vitals = raw_get(input, 'actor_vitals')
+    if actor_vitals ~= nil then
+        if type_value(actor_vitals) ~= 'table' or get_metatable(actor_vitals) ~= nil then
+            return invalid('ACTOR_VITALS_INVALID')
+        end
+    end
+
+    local function apply_vitals(actor)
+        if actor_vitals == nil then
+            return
+        end
+        local vitals = raw_get(actor_vitals, actor.actor_id)
+        if type_value(vitals) ~= 'table' then
+            return
+        end
+        local hp = raw_get(vitals, 'current_hp')
+        local qi = raw_get(vitals, 'current_qi')
+        if type_value(hp) == 'number' and hp == math_floor(hp) then
+            if hp < 0 then
+                hp = 0
+            end
+            if hp > actor.max_hp then
+                hp = actor.max_hp
+            end
+            actor.current_hp = hp
+            if hp == 0 then
+                actor.alive_state = 'DOWN'
+            end
+        end
+        if type_value(qi) == 'number' and qi == math_floor(qi) then
+            if qi < 0 then
+                qi = 0
+            end
+            if qi > actor.max_qi then
+                qi = actor.max_qi
+            end
+            actor.current_qi = qi
+        end
+    end
+
     local function add_side(members)
         local index
         for index = 1, #members do
             local actor = make_actor(members[index])
+            apply_vitals(actor)
             if actors[actor.actor_id] ~= nil then
                 return fail(CombatErrorCodes.COMBAT_SNAPSHOT_INVALID, 'DUPLICATE_ACTOR', {
                     actor_id = actor.actor_id,
