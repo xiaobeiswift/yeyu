@@ -190,6 +190,11 @@ local function normalize_delta_rows(rows, field_name)
     return result_ok(normalized)
 end
 
+-- Public normalizer for application-layer request digests (merge + sort).
+function CurrencyLedger.normalize_deltas(rows, field_name)
+    return normalize_delta_rows(rows, field_name or 'deltas')
+end
+
 -- costs and rewards are dense arrays of { currency_id, amount }.
 -- Catalog must expose :require(currency_id) -> Result definition.
 function CurrencyLedger.plan_transaction(state, costs, rewards, catalog)

@@ -43,13 +43,22 @@ local function formula_set()
     }
 end
 
-local function level_curve()
+local function level_curve(with_rewards)
+    local refs = {}
+    if with_rewards then
+        refs = {
+            {
+                reached_level = 2,
+                reward_ref = 'reward_level_two',
+            },
+        }
+    end
     return {
         id = 'curve_level_story',
         level_cap = 4,
         cumulative_exp_by_level = { 0, 100, 250, 500 },
         experience_cap = 1000,
-        level_reward_refs = {},
+        level_reward_refs = refs,
     }
 end
 
@@ -116,22 +125,26 @@ local function character_definition()
     }
 end
 
-local function build_character_rules()
+local function build_character_rules(options)
+    options = options or {}
     local character_catalog = CharacterCatalog.build({
         character_definitions = { character_definition() },
-        level_curves = { level_curve() },
+        level_curves = { level_curve(options.with_level_rewards == true) },
         formula_sets = { formula_set() },
         talent_definitions = { talent_definition() },
     })
     assert.equal(character_catalog.ok, true)
-    local reward_catalog = RewardCatalog.build({ reward_bundles = {} })
+    local reward_bundles = options.reward_bundles or {}
+    local reward_catalog = RewardCatalog.build({
+        reward_bundles = reward_bundles,
+    })
     assert.equal(reward_catalog.ok, true)
     local rules = CharacterRules.bind(
         character_catalog.value,
         reward_catalog.value
     )
     assert.equal(rules.ok, true)
-    return rules.value
+    return rules.value, reward_catalog.value
 end
 
 local function leaf(order, entry_type, target_id, quantity)
@@ -144,26 +157,36 @@ local function leaf(order, entry_type, target_id, quantity)
     }
 end
 
-local function build_shared_stack()
+local function build_shared_stack(options)
+    options = options or {}
     local memory = MemorySaveStore.new()
     local coordinator = SaveCoordinator.bind({ save_store = memory })
     assert.equal(coordinator.ok, true)
     local invoke = SaveCoordinator.fake_invoke(memory)
 
-    local character_repo = FakeCharacterRepository.new()
-    local character_bridge = CharacterSaveBridge.bind({
-        repository = character_repo,
-        coordinator = coordinator.value,
-        save_invoke = invoke,
-        default_save_seed = 777001,
+    local reward_bundles = {
+        {
+            id = 'reward_quest_copper',
+            schema_version = 1,
+            entries = {
+                leaf(1, 'CURRENCY', 'currency_copper', 30),
+            },
+        },
+    }
+    if options.with_level_rewards then
+        reward_bundles[#reward_bundles + 1] = {
+            id = 'reward_level_two',
+            schema_version = 1,
+            entries = {
+                leaf(1, 'CURRENCY', 'currency_copper', 50),
+            },
+        }
+    end
+
+    local character_rules, reward_catalog = build_character_rules({
+        with_level_rewards = options.with_level_rewards == true,
+        reward_bundles = reward_bundles,
     })
-    assert.equal(character_bridge.ok, true)
-    local character_service = CharacterWriteService.bind({
-        rules = build_character_rules(),
-        repository = character_repo,
-        save_bridge = character_bridge.value,
-    })
-    assert.equal(character_service.ok, true)
 
     local currency_catalog = CurrencyCatalog.build({
         currency_definitions = {
@@ -179,18 +202,6 @@ local function build_shared_stack()
         },
     })
     assert.equal(currency_catalog.ok, true)
-    local reward_catalog = RewardCatalog.build({
-        reward_bundles = {
-            {
-                id = 'reward_quest_copper',
-                schema_version = 1,
-                entries = {
-                    leaf(1, 'CURRENCY', 'currency_copper', 30),
-                },
-            },
-        },
-    })
-    assert.equal(reward_catalog.ok, true)
     local economy_store = FakeEconomyStore.new()
     assert.equal(economy_store.ok, true)
     local economy_bridge = EconomySaveBridge.bind({
@@ -202,11 +213,29 @@ local function build_shared_stack()
     assert.equal(economy_bridge.ok, true)
     local economy_service = EconomyService.bind({
         currency_catalog = currency_catalog.value,
-        reward_catalog = reward_catalog.value,
+        reward_catalog = reward_catalog,
         store = economy_store.value,
         save_bridge = economy_bridge.value,
     })
     assert.equal(economy_service.ok, true)
+
+    local character_repo = FakeCharacterRepository.new()
+    local character_bridge = CharacterSaveBridge.bind({
+        repository = character_repo,
+        coordinator = coordinator.value,
+        save_invoke = invoke,
+        default_save_seed = 777001,
+    })
+    assert.equal(character_bridge.ok, true)
+    local character_service = CharacterWriteService.bind({
+        rules = character_rules,
+        repository = character_repo,
+        save_bridge = character_bridge.value,
+        economy_service = options.bind_economy_to_character == true
+            and economy_service.value
+            or nil,
+    })
+    assert.equal(character_service.ok, true)
 
     local load = LoadGameSave.bind({ coordinator = coordinator.value })
     assert.equal(load.ok, true)
@@ -365,6 +394,147 @@ return {
         assert.equal(
             loaded.value.loaded_envelopes[4].payload.currency_balance_rows[1].balance,
             30
+        )
+    end),
+
+    case('economy spend after grant reloads reduced balance through checkpoint', function()
+        local stack = build_shared_stack()
+        local prepared = stack.economy_service:prepare_reward({
+            reward_id = 'reward_quest_copper',
+            source_type = 'QUEST',
+            source_ref = 'reward_quest_copper',
+            source_occurrence_id = 'quest_run_spend_fund_001',
+        })
+        assert.equal(prepared.ok, true)
+        local CanonicalReceiptHashV1 = require 'wzx.domain.common.canonical_receipt_hash_v1'
+        local fund_receipt = CanonicalReceiptHashV1.derive('economy_test_receipt', {
+            { name = 'label', type = 'STRING' },
+        }, { label = 'spend_fund' })
+        assert.equal(fund_receipt.ok, true)
+        local funded = stack.economy_service:grant_prepared_reward({
+            prepared = prepared.value,
+            receipt_id = fund_receipt.value.receipt_id,
+            purpose_type = 'QUEST_REWARD',
+            purpose_ref = 'quest_spend_fund',
+            player_save_scope = 'player001',
+            request_id = 'request_economy_spend_fund',
+        })
+        assert.equal(funded.ok, true, funded.error and funded.error.code)
+
+        local spend_receipt = CanonicalReceiptHashV1.derive('economy_test_receipt', {
+            { name = 'label', type = 'STRING' },
+        }, { label = 'spend_once' })
+        assert.equal(spend_receipt.ok, true)
+        local spent = stack.economy_service:spend_resources({
+            costs = {
+                { currency_id = 'currency_copper', amount = 12 },
+            },
+            purpose_type = 'SHOP_PURCHASE',
+            purpose_ref = 'shop_reload_item',
+            receipt_id = spend_receipt.value.receipt_id,
+            source_occurrence_id = 'shop_buy_reload_001',
+            player_save_scope = 'player001',
+            request_id = 'request_economy_spend_1',
+        })
+        assert.equal(spent.ok, true, spent.error and spent.error.code)
+        assert.equal(spent.value.save.status, 'COMMITTED')
+        assert.equal(spent.value.already_committed, false)
+
+        local live = stack.economy_service:get_balance('currency_copper')
+        assert.equal(live.ok, true)
+        assert.equal(live.value.balance, 18)
+
+        local loaded = stack.load:load({
+            player_ref = 'player001',
+            session_instance_id = 'session_spend_1',
+            request_id = 'request_load_spend_1',
+        }, stack.invoke)
+        assert.equal(loaded.ok, true, loaded.error and loaded.error.code)
+        assert.equal(loaded.value.mode, 'READY')
+        assert.equal(
+            loaded.value.loaded_envelopes[4].payload.currency_balance_rows[1].balance,
+            18
+        )
+        assert.equal(
+            #loaded.value.loaded_envelopes[5].payload.economy_reward_receipts,
+            2
+        )
+    end),
+
+    case('level-up auto-settles currency then reloads slot 3/4/5 consistently', function()
+        local stack = build_shared_stack({
+            with_level_rewards = true,
+            bind_economy_to_character = true,
+        })
+
+        local created = stack.character_service:create_owned({
+            player_save_scope = 'player001',
+            character_id = 'char_hero',
+            receipt_id = 'character:create:hero_receipt_001',
+            transaction_id = 'character_create_hero_tx_001',
+            source_type = 'QUEST',
+            source_reference = 'quest_main_001:reward:1',
+            request_id = 'request_create_level_1',
+        }, stack.character_repo_invoke)
+        assert.equal(created.ok, true, created.error and created.error.code)
+        assert.equal(created.value.save.status, 'COMMITTED')
+
+        local granted = stack.character_service:grant_experience({
+            player_save_scope = 'player001',
+            character_id = 'char_hero',
+            amount = 100,
+            reason = 'QUEST_REWARD',
+            receipt_id = 'character:experience:hero_level_auto_001',
+            transaction_id = 'character_experience_level_auto_tx_001',
+            request_id = 'request_xp_level_auto_1',
+        }, stack.character_repo_invoke)
+        assert.equal(granted.ok, true, granted.error and granted.error.code)
+        assert.equal(granted.value.status, 'COMMITTED')
+        assert.equal(granted.value.result.old_level, 1)
+        assert.equal(granted.value.result.new_level, 2)
+        assert.equal(granted.value.result.reward_status, 'COMMITTED')
+        assert.equal(granted.value.reward_settlement.auto_settled, true)
+        assert.equal(#granted.value.reward_settlement.grants, 1)
+        assert.equal(granted.value.save.status, 'COMMITTED')
+
+        local live_balance = stack.economy_service:get_balance('currency_copper')
+        assert.equal(live_balance.ok, true)
+        assert.equal(live_balance.value.balance, 50)
+
+        local loaded = stack.load:load({
+            player_ref = 'player001',
+            session_instance_id = 'session_level_reward_1',
+            request_id = 'request_load_level_reward_1',
+        }, stack.invoke)
+        assert.equal(loaded.ok, true, loaded.error and loaded.error.code)
+        assert.equal(loaded.value.mode, 'READY')
+        assert.equal(loaded.value.writable, true)
+
+        local character_row = loaded.value.loaded_envelopes[3].payload.character_rows[1]
+        assert.equal(character_row.character_id, 'char_hero')
+        assert.equal(character_row.level, 2)
+        assert.equal(character_row.experience, 100)
+
+        local balance_rows =
+            loaded.value.loaded_envelopes[4].payload.currency_balance_rows
+        assert.equal(#balance_rows, 1)
+        assert.equal(balance_rows[1].currency_id, 'currency_copper')
+        assert.equal(balance_rows[1].balance, 50)
+
+        local slot5 = loaded.value.loaded_envelopes[5].payload
+        assert.equal(#slot5.character_operation_receipts >= 2, true)
+        assert.equal(#slot5.economy_reward_receipts, 1)
+        assert.equal(
+            loaded.value.manifest.slot_revision_entries.slot_3_revision,
+            loaded.value.loaded_envelopes[3].revision
+        )
+        assert.equal(
+            loaded.value.manifest.slot_revision_entries.slot_4_revision,
+            loaded.value.loaded_envelopes[4].revision
+        )
+        assert.equal(
+            loaded.value.manifest.slot_revision_entries.slot_5_revision,
+            loaded.value.loaded_envelopes[5].revision
         )
     end),
 }

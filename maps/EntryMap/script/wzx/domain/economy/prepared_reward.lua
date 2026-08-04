@@ -193,10 +193,10 @@ function PreparedReward.normalize_currency_leaves(leaves, options)
         end
 
         local entry_type = raw_get(leaf, 'entry_type')
-        if entry_type ~= 'CURRENCY' then
+        if entry_type ~= 'CURRENCY' and entry_type ~= 'ITEM' then
             return fail(
                 EconomyErrorCodes.ECONOMY_ENTRY_UNSUPPORTED,
-                'ONLY_CURRENCY_SUPPORTED_IN_MINIMAL_SLICE',
+                'ONLY_CURRENCY_AND_ITEM_SUPPORTED_IN_MINIMAL_SLICE',
                 {
                     entry_type = entry_type,
                     target_id = raw_get(leaf, 'target_id'),
@@ -234,7 +234,7 @@ function PreparedReward.normalize_currency_leaves(leaves, options)
         end
 
         local candidate = {
-            entry_type = 'CURRENCY',
+            entry_type = entry_type,
             target_id = raw_get(leaf, 'target_id'),
             quantity = quantity,
             target_character_id = raw_get(leaf, 'target_character_id'),
@@ -463,12 +463,45 @@ function PreparedReward.to_currency_rewards(prepared)
     local index
     for index = 1, #verified.value.entries do
         local entry = verified.value.entries[index]
-        rewards[index] = {
-            currency_id = entry.target_id,
-            amount = entry.quantity,
-        }
+        if entry.entry_type == 'CURRENCY' then
+            rewards[#rewards + 1] = {
+                currency_id = entry.target_id,
+                amount = entry.quantity,
+            }
+        elseif entry.entry_type ~= 'ITEM' then
+            return fail(
+                EconomyErrorCodes.ECONOMY_ENTRY_UNSUPPORTED,
+                'UNSUPPORTED_ENTRY_IN_CURRENCY_SPLIT',
+                { entry_type = entry.entry_type, target_id = entry.target_id }
+            )
+        end
     end
     return result_ok(rewards)
+end
+
+function PreparedReward.to_item_grants(prepared)
+    local verified = PreparedReward.verify_content_hash(prepared)
+    if not verified.ok then
+        return verified
+    end
+    local grants = {}
+    local index
+    for index = 1, #verified.value.entries do
+        local entry = verified.value.entries[index]
+        if entry.entry_type == 'ITEM' then
+            grants[#grants + 1] = {
+                item_id = entry.target_id,
+                amount = entry.quantity,
+            }
+        elseif entry.entry_type ~= 'CURRENCY' then
+            return fail(
+                EconomyErrorCodes.ECONOMY_ENTRY_UNSUPPORTED,
+                'UNSUPPORTED_ENTRY_IN_ITEM_SPLIT',
+                { entry_type = entry.entry_type, target_id = entry.target_id }
+            )
+        end
+    end
+    return result_ok(grants)
 end
 
 function PreparedReward.derive_request_hash(prepared, purpose_type, purpose_ref)

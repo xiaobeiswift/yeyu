@@ -68,6 +68,39 @@ local function copy_source(row)
     }
 end
 
+local function copy_pending(row)
+    local entries = {}
+    local index
+    for index = 1, #(row.entries or {}) do
+        local entry = row.entries[index]
+        entries[index] = {
+            entry_type = entry.entry_type,
+            target_id = entry.target_id,
+            quantity = entry.quantity,
+            target_character_id = entry.target_character_id,
+            entry_order = entry.entry_order,
+        }
+    end
+    return {
+        pending_id = row.pending_id,
+        receipt_id = row.receipt_id,
+        request_hash = row.request_hash,
+        purpose_type = row.purpose_type,
+        purpose_ref = row.purpose_ref,
+        source_occurrence_id = row.source_occurrence_id,
+        reason = row.reason,
+        status = row.status,
+        prepared_id = row.prepared_id,
+        content_hash = row.content_hash,
+        source_type = row.source_type,
+        source_ref = row.source_ref,
+        config_version = row.config_version,
+        overflow_policy = row.overflow_policy,
+        seed_hash = row.seed_hash,
+        entries = entries,
+    }
+end
+
 function FakeEconomyStore.new()
     local view = set_metatable({}, Store)
     STATES[view] = {
@@ -77,6 +110,8 @@ function FakeEconomyStore.new()
         source_occurrences = {},
         reservations = {},
         reservation_counter = 0,
+        pending_rewards = {},
+        pending_counter = 0,
     }
     return result_ok(view)
 end
@@ -157,13 +192,18 @@ function Store:put_committed_receipt(receipt)
     end
     local existing_source = state.source_occurrences[source_occurrence_id]
     if existing_source ~= nil then
-        return result_ok({
-            already_present = true,
-            source = copy_source(existing_source),
-            receipt = state.receipts[existing_source.receipt_id]
-                and copy_receipt(state.receipts[existing_source.receipt_id])
-                or nil,
-        })
+        -- Allow PENDING -> COMMITTED upgrade for the same receipt (claim path).
+        if existing_source.receipt_id ~= receipt_id
+            or existing_source.status == 'COMMITTED'
+        then
+            return result_ok({
+                already_present = true,
+                source = copy_source(existing_source),
+                receipt = state.receipts[existing_source.receipt_id]
+                    and copy_receipt(state.receipts[existing_source.receipt_id])
+                    or nil,
+            })
+        end
     end
 
     state.receipts[receipt_id] = copy_receipt(receipt)
@@ -178,6 +218,107 @@ function Store:put_committed_receipt(receipt)
         receipt = copy_receipt(state.receipts[receipt_id]),
         receipt_revision = state.receipt_revision,
     })
+end
+
+function Store:put_source_occurrence(row)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    if type_value(row) ~= 'table' or get_metatable(row) ~= nil then
+        return invalid('SOURCE_TABLE_REQUIRED')
+    end
+    local source_occurrence_id = raw_get(row, 'source_occurrence_id')
+    local receipt_id = raw_get(row, 'receipt_id')
+    local status = raw_get(row, 'status') or 'PENDING'
+    if type_value(source_occurrence_id) ~= 'string' or source_occurrence_id == '' then
+        return invalid('SOURCE_OCCURRENCE_ID_REQUIRED')
+    end
+    if type_value(receipt_id) ~= 'string' or receipt_id == '' then
+        return invalid('RECEIPT_ID_REQUIRED')
+    end
+    local existing = state.source_occurrences[source_occurrence_id]
+    if existing ~= nil and existing.receipt_id ~= receipt_id then
+        return result_ok({
+            already_present = true,
+            source = copy_source(existing),
+        })
+    end
+    state.source_occurrences[source_occurrence_id] = {
+        source_occurrence_id = source_occurrence_id,
+        receipt_id = receipt_id,
+        status = status,
+    }
+    return result_ok({
+        already_present = existing ~= nil,
+        source = copy_source(state.source_occurrences[source_occurrence_id]),
+    })
+end
+
+function Store:put_pending_reward(pending)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    if type_value(pending) ~= 'table' or get_metatable(pending) ~= nil then
+        return invalid('PENDING_TABLE_REQUIRED', { field = 'pending' })
+    end
+    local pending_id = raw_get(pending, 'pending_id')
+    if type_value(pending_id) ~= 'string' or pending_id == '' then
+        return invalid('PENDING_ID_REQUIRED')
+    end
+    if state.pending_rewards[pending_id] ~= nil then
+        return result_ok({
+            already_present = true,
+            pending = copy_pending(state.pending_rewards[pending_id]),
+        })
+    end
+    local count = 0
+    local key
+    for key in raw_next, state.pending_rewards do
+        if state.pending_rewards[key].status == 'AVAILABLE' then
+            count = count + 1
+        end
+    end
+    if count >= 64 then
+        return result_err(
+            'ECONOMY_PENDING_REWARD_LIMIT',
+            'error.economy.pending_reward_limit',
+            false,
+            { reason = 'PENDING_REWARD_LIMIT', count = count }
+        )
+    end
+    state.pending_rewards[pending_id] = copy_pending(pending)
+    state.receipt_revision = state.receipt_revision + 1
+    return result_ok({
+        already_present = false,
+        pending = copy_pending(state.pending_rewards[pending_id]),
+    })
+end
+
+function Store:get_pending_reward(pending_id)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local row = state.pending_rewards[pending_id]
+    if row == nil then
+        return result_ok(nil)
+    end
+    return result_ok(copy_pending(row))
+end
+
+function Store:update_pending_reward_status(pending_id, status)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local row = state.pending_rewards[pending_id]
+    if row == nil then
+        return result_ok(nil)
+    end
+    row.status = status
+    return result_ok(copy_pending(row))
 end
 
 function Store:create_reservation(payload)
@@ -256,10 +397,28 @@ function Store:export_save_bundles()
     if not slot4.ok then
         return slot4
     end
+    -- Minimal save slice only persists COMMITTED receipts/sources.
+    -- In-memory PENDING rows remain available until claim in-process.
+    local committed_receipts = {}
+    local receipt_id
+    local receipt
+    for receipt_id, receipt in raw_next, state.receipts do
+        if receipt.status == 'COMMITTED' then
+            committed_receipts[receipt_id] = receipt
+        end
+    end
+    local committed_sources = {}
+    local source_id
+    local source
+    for source_id, source in raw_next, state.source_occurrences do
+        if source.status == 'COMMITTED' then
+            committed_sources[source_id] = source
+        end
+    end
     local slot5 = EconomyReceiptCodec.encode({
         receipt_revision = state.receipt_revision,
-        receipts = state.receipts,
-        source_occurrences = state.source_occurrences,
+        receipts = committed_receipts,
+        source_occurrences = committed_sources,
     })
     if not slot5.ok then
         return slot5

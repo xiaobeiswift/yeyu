@@ -836,18 +836,21 @@ local function build_experience_commit(identity, planned, reason, settlement, sa
     })
 end
 
-local function validate_reward_settlement(input, planned, identity)
-    if planned.reward_ref_count == 0 then
-        if raw_get(input, 'reward_settlement') ~= nil then
-            return invalid_argument(
-                'REWARD_SETTLEMENT_FORBIDDEN_WHEN_EMPTY',
-                { field = 'reward_settlement' }
-            )
-        end
-        return result_ok(nil)
-    end
+local function reward_receipt_identity_forbidden(
+    reward_receipt_id,
+    reward_result_digest,
+    identity,
+    planned
+)
+    return reward_receipt_id == identity.receipt_id
+        or reward_receipt_id == identity.transaction_id
+        or reward_receipt_id == identity.transport_key
+        or reward_receipt_id == planned.before_state.created_receipt_id
+        or reward_receipt_id == planned.reward_plan_digest
+        or reward_receipt_id == reward_result_digest
+end
 
-    local settlement = raw_get(input, 'reward_settlement')
+local function validate_external_reward_settlement(settlement, planned, identity)
     if type_value(settlement) ~= 'table' or get_metatable(settlement) ~= nil then
         return fail(
             'REWARD_SETTLEMENT_REQUIRED',
@@ -879,13 +882,12 @@ local function validate_reward_settlement(input, planned, identity)
 
     local reward_receipt_id = reward_receipt.value
     local reward_result_digest = settlement.reward_result_digest
-    if reward_receipt_id == identity.receipt_id
-        or reward_receipt_id == identity.transaction_id
-        or reward_receipt_id == identity.transport_key
-        or reward_receipt_id == planned.before_state.created_receipt_id
-        or reward_receipt_id == planned.reward_plan_digest
-        or reward_receipt_id == reward_result_digest
-    then
+    if reward_receipt_identity_forbidden(
+        reward_receipt_id,
+        reward_result_digest,
+        identity,
+        planned
+    ) then
         return invalid_argument('REWARD_RECEIPT_IDENTITY_REUSE_FORBIDDEN', {
             field = 'reward_settlement.reward_receipt_id',
         })
@@ -894,7 +896,246 @@ local function validate_reward_settlement(input, planned, identity)
     return result_ok({
         reward_receipt_id = reward_receipt_id,
         reward_result_digest = reward_result_digest,
+        auto_settled = false,
+        grants = {},
     })
+end
+
+-- Grant each planned level reward through the bound EconomyService.
+-- Occurrence/receipt identities bind only to the experience receipt + ordinal so
+-- retries of the same command remain idempotent; a changed plan under the same
+-- ordinal fails closed with ECONOMY_RECEIPT_CONFLICT instead of double-paying.
+local function settle_level_rewards_via_economy(self, identity, planned, input)
+    local state = STATES[self]
+    local economy = state and state.economy_service or nil
+    if economy == nil then
+        return fail(
+            'REWARD_SETTLEMENT_REQUIRED',
+            'REWARD_SETTLEMENT_REQUIRED',
+            {
+                reward_ref_count = planned.reward_ref_count,
+                reward_refs = planned.reward_refs,
+            },
+            false
+        )
+    end
+
+    local rewards = planned.reached_level_rewards
+    if type_value(rewards) ~= 'table' or not is_dense_array(rewards) then
+        return fail(
+            'REWARD_SETTLEMENT_REQUIRED',
+            'LEVEL_REWARD_ROWS_INVALID',
+            { reward_ref_count = planned.reward_ref_count },
+            false
+        )
+    end
+    if #rewards ~= planned.reward_ref_count then
+        return fail(
+            'REWARD_SETTLEMENT_REQUIRED',
+            'LEVEL_REWARD_COUNT_MISMATCH',
+            {
+                reward_ref_count = planned.reward_ref_count,
+                row_count = #rewards,
+            },
+            false
+        )
+    end
+
+    local grants = {}
+    local chain_digest = ZERO_DIGEST
+    local index
+    for index = 1, #rewards do
+        local row = rewards[index]
+        local reward_ref = row.reward_ref
+        local reached_level = row.reached_level
+
+        local occurrence_proof = canonical_derive(
+            'character_level_reward_occurrence',
+            {
+                { name = 'experience_receipt_id', type = 'STRING' },
+                { name = 'ordinal', type = 'INTEGER' },
+            },
+            {
+                experience_receipt_id = identity.receipt_id,
+                ordinal = index,
+            }
+        )
+        if not occurrence_proof.ok then
+            return occurrence_proof
+        end
+
+        local grant_proof = canonical_derive(
+            'character_level_reward_grant',
+            {
+                { name = 'experience_receipt_id', type = 'STRING' },
+                { name = 'ordinal', type = 'INTEGER' },
+            },
+            {
+                experience_receipt_id = identity.receipt_id,
+                ordinal = index,
+            }
+        )
+        if not grant_proof.ok then
+            return grant_proof
+        end
+
+        local grant_receipt_id = grant_proof.value.receipt_id
+        if grant_receipt_id == identity.receipt_id
+            or grant_receipt_id == identity.transaction_id
+            or grant_receipt_id == identity.transport_key
+            or grant_receipt_id == planned.before_state.created_receipt_id
+            or grant_receipt_id == planned.reward_plan_digest
+        then
+            return invalid_argument('REWARD_RECEIPT_IDENTITY_REUSE_FORBIDDEN', {
+                field = 'auto_reward_settlement.receipt_id',
+                ordinal = index,
+            })
+        end
+
+        local prepared = economy:prepare_reward({
+            reward_id = reward_ref,
+            source_type = 'LEVEL_REWARD',
+            source_ref = reward_ref,
+            source_occurrence_id = occurrence_proof.value.digest,
+        })
+        if not prepared.ok then
+            return prepared
+        end
+
+        local granted = economy:grant_prepared_reward({
+            prepared = prepared.value,
+            receipt_id = grant_receipt_id,
+            purpose_type = 'LEVEL_REWARD',
+            purpose_ref = reward_ref,
+            player_save_scope = identity.player_save_scope,
+            -- request_id is a component; leave command_id unset so the economy
+            -- save bridge derives a component checkpoint id from it.
+            request_id = identity.request_id,
+            save_seed = raw_get(input, 'save_seed'),
+            content_version = raw_get(input, 'content_version'),
+        })
+        if not granted.ok then
+            return granted
+        end
+        if granted.value.status ~= 'COMMITTED'
+            or type_value(granted.value.result_hash) ~= 'string'
+            or not is_sha256(granted.value.result_hash)
+            or granted.value.result_hash == ZERO_DIGEST
+        then
+            return fail(
+                'REWARD_SETTLEMENT_REQUIRED',
+                'ECONOMY_GRANT_NOT_COMMITTED',
+                {
+                    reward_ref = reward_ref,
+                    ordinal = index,
+                    status = granted.value and granted.value.status,
+                },
+                false
+            )
+        end
+
+        grants[index] = {
+            reward_ref = reward_ref,
+            reached_level = reached_level,
+            receipt_id = granted.value.receipt_id,
+            result_hash = granted.value.result_hash,
+            already_committed = granted.value.already_committed == true,
+            economy_revision = granted.value.economy_revision,
+            source_occurrence_id = granted.value.source_occurrence_id,
+            save = granted.value.save,
+        }
+
+        local chain = canonical_derive(
+            'character_level_reward_chain',
+            {
+                { name = 'previous_digest', type = 'STRING' },
+                { name = 'ordinal', type = 'INTEGER' },
+                { name = 'reward_ref', type = 'STRING' },
+                { name = 'grant_receipt_id', type = 'STRING' },
+                { name = 'result_hash', type = 'STRING' },
+            },
+            {
+                previous_digest = chain_digest,
+                ordinal = index,
+                reward_ref = reward_ref,
+                grant_receipt_id = granted.value.receipt_id,
+                result_hash = granted.value.result_hash,
+            }
+        )
+        if not chain.ok then
+            return chain
+        end
+        chain_digest = chain.value.digest
+    end
+
+    local settlement_receipt_id
+    local settlement_result_digest
+    if #grants == 1 then
+        settlement_receipt_id = grants[1].receipt_id
+        settlement_result_digest = grants[1].result_hash
+    else
+        local aggregate = canonical_derive(
+            'character_level_reward_settlement',
+            {
+                { name = 'experience_receipt_id', type = 'STRING' },
+                { name = 'grant_count', type = 'INTEGER' },
+                { name = 'chain_digest', type = 'STRING' },
+            },
+            {
+                experience_receipt_id = identity.receipt_id,
+                grant_count = #grants,
+                chain_digest = chain_digest,
+            }
+        )
+        if not aggregate.ok then
+            return aggregate
+        end
+        settlement_receipt_id = aggregate.value.receipt_id
+        settlement_result_digest = chain_digest
+    end
+
+    if reward_receipt_identity_forbidden(
+        settlement_receipt_id,
+        settlement_result_digest,
+        identity,
+        planned
+    ) then
+        return invalid_argument('REWARD_RECEIPT_IDENTITY_REUSE_FORBIDDEN', {
+            field = 'auto_reward_settlement.settlement_receipt_id',
+        })
+    end
+
+    return result_ok({
+        reward_receipt_id = settlement_receipt_id,
+        reward_result_digest = settlement_result_digest,
+        auto_settled = true,
+        grants = grants,
+    })
+end
+
+local function resolve_reward_settlement(self, input, planned, identity)
+    if planned.reward_ref_count == 0 then
+        if raw_get(input, 'reward_settlement') ~= nil then
+            return invalid_argument(
+                'REWARD_SETTLEMENT_FORBIDDEN_WHEN_EMPTY',
+                { field = 'reward_settlement' }
+            )
+        end
+        return result_ok(nil)
+    end
+
+    -- Explicit external proof remains supported for offline fakes and recovery
+    -- injection. When omitted, a bound EconomyService settles currency leaves.
+    local settlement = raw_get(input, 'reward_settlement')
+    if settlement ~= nil then
+        return validate_external_reward_settlement(
+            settlement,
+            planned,
+            identity
+        )
+    end
+
+    return settle_level_rewards_via_economy(self, identity, planned, input)
 end
 
 function Service:grant_experience(input, invoke)
@@ -936,7 +1177,8 @@ function Service:grant_experience(input, invoke)
         return planned
     end
 
-    local settlement = validate_reward_settlement(
+    local settlement = resolve_reward_settlement(
+        self,
         input,
         planned.value,
         identity
@@ -982,6 +1224,14 @@ function Service:grant_experience(input, invoke)
             reward_plan_digest = planned.value.reward_plan_digest,
             reward_catalog_bound = planned.value.reward_catalog_bound,
         }
+        if settlement.value ~= nil then
+            finalized.value.reward_settlement = {
+                reward_receipt_id = settlement.value.reward_receipt_id,
+                reward_result_digest = settlement.value.reward_result_digest,
+                auto_settled = settlement.value.auto_settled == true,
+                grants = settlement.value.grants or {},
+            }
+        end
     end
     return finalized
 end
@@ -1524,12 +1774,25 @@ function CharacterWriteService.bind(options)
         })
     end
 
+    local economy_service = raw_get(options, 'economy_service')
+    if economy_service ~= nil then
+        if type_value(economy_service) ~= 'table'
+            or type_value(economy_service.prepare_reward) ~= 'function'
+            or type_value(economy_service.grant_prepared_reward) ~= 'function'
+        then
+            return invalid_argument('ECONOMY_SERVICE_REQUIRED', {
+                field = 'economy_service',
+            })
+        end
+    end
+
     local service = set_metatable({}, Service)
     STATES[service] = {
         rules = rules,
         repository = repository,
         save_bridge = save_bridge,
         event_bus = event_bus,
+        economy_service = economy_service,
     }
     return result_ok(service)
 end

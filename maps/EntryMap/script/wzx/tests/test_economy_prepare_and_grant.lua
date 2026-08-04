@@ -4,6 +4,9 @@ local CurrencyCatalog = require 'wzx.config.schema.economy.catalog'
 local EconomyReceiptCodec = require 'wzx.domain.economy.economy_receipt_codec'
 local EconomyService = require 'wzx.application.use_cases.economy.economy_service'
 local FakeEconomyStore = require 'wzx.adapters.fake.economy.fake_economy_store'
+local FakeInventoryStore = require 'wzx.adapters.fake.inventory.fake_inventory_store'
+local InventoryService = require 'wzx.application.use_cases.inventory.inventory_service'
+local ItemCatalog = require 'wzx.config.schema.inventory.catalog'
 local RewardCatalog = require 'wzx.config.schema.reward.catalog'
 
 local case = Harness.case
@@ -108,16 +111,46 @@ local function build_reward_catalog()
     return built.value
 end
 
-local function bind_service()
+local function build_item_catalog()
+    local built = ItemCatalog.build({
+        item_definitions = {
+            {
+                id = 'item_healing_salve',
+                schema_version = 1,
+                category = 'CONSUMABLE',
+                name_key = 'item.healing_salve.name',
+                max_stack = 20,
+                ownership_cap = 200,
+            },
+        },
+    })
+    assert.equal(built.ok, true)
+    return built.value
+end
+
+local function bind_service(options)
+    options = options or {}
     local store = FakeEconomyStore.new()
     assert.equal(store.ok, true)
+    local inventory_service = nil
+    if options.with_inventory == true then
+        local inventory_store = FakeInventoryStore.new()
+        assert.equal(inventory_store.ok, true)
+        local bound_inventory = InventoryService.bind({
+            item_catalog = build_item_catalog(),
+            store = inventory_store.value,
+        })
+        assert.equal(bound_inventory.ok, true)
+        inventory_service = bound_inventory.value
+    end
     local service = EconomyService.bind({
         currency_catalog = build_currency_catalog(),
         reward_catalog = build_reward_catalog(),
         store = store.value,
+        inventory_service = inventory_service,
     })
     assert.equal(service.ok, true)
-    return service.value, store.value
+    return service.value, store.value, inventory_service
 end
 
 local function make_receipt_id(label)
@@ -211,7 +244,7 @@ return {
         assert.equal(restored_balance.value.balance, 30)
     end),
 
-    case('prepare rejects item leaves and premium mint in minimal slice', function()
+    case('prepare rejects item leaves without inventory and premium mint', function()
         local service = bind_service()
         local with_item = service:prepare_reward({
             reward_id = 'reward_with_item',
@@ -237,6 +270,36 @@ return {
         })
         assert.equal(grant_premium.ok, false)
         assert.equal(grant_premium.error.code, 'ECONOMY_SOURCE_NOT_AUTHORIZED')
+    end),
+
+    case('prepare and grant mixed currency plus item through inventory service', function()
+        local service, _, inventory = bind_service({ with_inventory = true })
+        local prepared = service:prepare_reward({
+            reward_id = 'reward_with_item',
+            source_type = 'QUEST',
+            source_ref = 'reward_with_item',
+            source_occurrence_id = 'quest_item_grant_001',
+        })
+        assert.equal(prepared.ok, true, prepared.error and prepared.error.code)
+        assert.equal(#prepared.value.entries, 2)
+
+        local granted = service:grant_prepared_reward({
+            prepared = prepared.value,
+            receipt_id = make_receipt_id('mixed_item'),
+            purpose_type = 'QUEST_REWARD',
+            purpose_ref = 'quest_mixed',
+        })
+        assert.equal(granted.ok, true, granted.error and granted.error.code)
+        assert.equal(granted.value.status, 'COMMITTED')
+        assert.equal(#granted.value.item_grants, 1)
+        assert.equal(granted.value.item_grants[1].item_id, 'item_healing_salve')
+
+        local copper = service:get_balance('currency_copper')
+        assert.equal(copper.value.balance, 5)
+        local salve = inventory:get_count('item_healing_salve')
+        assert.equal(salve.ok, true)
+        assert.equal(salve.value.count, 1)
+        assert.equal(granted.value.inventory_revision, salve.value.inventory_revision)
     end),
 
     case('nested currency leaves merge and reserve-commit-release works', function()
@@ -327,5 +390,152 @@ return {
         })
         assert.equal(again.ok, false)
         assert.equal(again.error.code, 'ECONOMY_RECEIPT_CONFLICT')
+    end),
+
+    case('pending overflow defers full inventory grant and claim delivers items', function()
+        local inventory_store = FakeInventoryStore.new({ capacity_limit = 1 })
+        assert.equal(inventory_store.ok, true)
+        local inventory = InventoryService.bind({
+            item_catalog = build_item_catalog(),
+            store = inventory_store.value,
+        })
+        assert.equal(inventory.ok, true)
+        -- Fill the only capacity slot.
+        local fill = inventory.value:grant_items({
+            items = { { item_id = 'item_healing_salve', amount = 20 } },
+        })
+        assert.equal(fill.ok, true)
+
+        local store = FakeEconomyStore.new()
+        assert.equal(store.ok, true)
+        local service = EconomyService.bind({
+            currency_catalog = build_currency_catalog(),
+            reward_catalog = build_reward_catalog(),
+            store = store.value,
+            inventory_service = inventory.value,
+        })
+        assert.equal(service.ok, true)
+
+        local prepared = service.value:prepare_reward({
+            reward_id = 'reward_with_item',
+            source_type = 'QUEST',
+            source_ref = 'reward_with_item',
+            source_occurrence_id = 'quest_pending_001',
+            overflow_policy = 'PENDING',
+        })
+        assert.equal(prepared.ok, true)
+        local deferred = service.value:grant_prepared_reward({
+            prepared = prepared.value,
+            receipt_id = make_receipt_id('pending_item'),
+            purpose_type = 'QUEST_REWARD',
+            purpose_ref = 'quest_pending',
+        })
+        assert.equal(deferred.ok, true, deferred.error and deferred.error.code)
+        assert.equal(deferred.value.status, 'PENDING')
+        assert.equal(deferred.value.reason, 'INVENTORY_FULL')
+
+        -- Free capacity then claim.
+        local consumed = inventory.value:consume_items({
+            costs = { { item_id = 'item_healing_salve', amount = 20 } },
+        })
+        assert.equal(consumed.ok, true)
+        local claimed = service.value:claim_pending_reward({
+            pending_id = deferred.value.pending_id,
+        })
+        assert.equal(claimed.ok, true, claimed.error and claimed.error.code)
+        assert.equal(claimed.value.status, 'COMMITTED')
+        local salve = inventory.value:get_count('item_healing_salve')
+        assert.equal(salve.value.count, 1)
+        local copper = service.value:get_balance('currency_copper')
+        assert.equal(copper.value.balance, 5)
+    end),
+
+    case('spend resources debits currency with receipt and source idempotency', function()
+        local service = bind_service()
+        local prepared = service:prepare_reward({
+            reward_id = 'reward_quest_copper',
+            source_type = 'QUEST',
+            source_ref = 'reward_quest_copper',
+            source_occurrence_id = 'quest_fund_spend_001',
+        })
+        assert.equal(prepared.ok, true)
+        local funded = service:grant_prepared_reward({
+            prepared = prepared.value,
+            receipt_id = make_receipt_id('fund_spend'),
+            purpose_type = 'QUEST_REWARD',
+            purpose_ref = 'quest_fund',
+        })
+        assert.equal(funded.ok, true)
+
+        local spend_receipt = make_receipt_id('spend_once')
+        local spent = service:spend_resources({
+            costs = {
+                { currency_id = 'currency_copper', amount = 10 },
+                { currency_id = 'currency_copper', amount = 5 },
+            },
+            purpose_type = 'SHOP_PURCHASE',
+            purpose_ref = 'shop_demo_item',
+            receipt_id = spend_receipt,
+            source_occurrence_id = 'shop_buy_spend_001',
+        })
+        assert.equal(spent.ok, true, spent.error and spent.error.code)
+        assert.equal(spent.value.status, 'COMMITTED')
+        assert.equal(spent.value.already_committed, false)
+        assert.equal(#spent.value.costs, 1)
+        assert.equal(spent.value.costs[1].amount, 15)
+
+        local copper = service:get_balance('currency_copper')
+        assert.equal(copper.value.balance, 15)
+
+        local replay = service:spend_resources({
+            costs = {
+                { currency_id = 'currency_copper', amount = 15 },
+            },
+            purpose_type = 'SHOP_PURCHASE',
+            purpose_ref = 'shop_demo_item',
+            receipt_id = spend_receipt,
+            source_occurrence_id = 'shop_buy_spend_001',
+        })
+        assert.equal(replay.ok, true)
+        assert.equal(replay.value.already_committed, true)
+        copper = service:get_balance('currency_copper')
+        assert.equal(copper.value.balance, 15)
+
+        local other_receipt = make_receipt_id('spend_other')
+        local source_conflict = service:spend_resources({
+            costs = {
+                { currency_id = 'currency_copper', amount = 15 },
+            },
+            purpose_type = 'SHOP_PURCHASE',
+            purpose_ref = 'shop_demo_item',
+            receipt_id = other_receipt,
+            source_occurrence_id = 'shop_buy_spend_001',
+        })
+        assert.equal(source_conflict.ok, false)
+        assert.equal(source_conflict.error.code, 'ECONOMY_SOURCE_ALREADY_GRANTED')
+
+        local insufficient = service:spend_resources({
+            costs = {
+                { currency_id = 'currency_copper', amount = 100 },
+            },
+            purpose_type = 'SHOP_PURCHASE',
+            purpose_ref = 'shop_demo_expensive',
+            receipt_id = make_receipt_id('spend_insufficient'),
+            source_occurrence_id = 'shop_buy_spend_002',
+        })
+        assert.equal(insufficient.ok, false)
+        assert.equal(insufficient.error.code, 'ECONOMY_CURRENCY_INSUFFICIENT')
+
+        local bad_purpose = service:spend_resources({
+            costs = {
+                { currency_id = 'currency_copper', amount = 1 },
+            },
+            purpose_type = 'NOT_A_REAL_PURPOSE',
+            purpose_ref = 'x',
+            receipt_id = make_receipt_id('spend_bad_purpose'),
+            source_occurrence_id = 'shop_buy_spend_003',
+        })
+        assert.equal(bad_purpose.ok, false)
+        assert.equal(bad_purpose.error.details.reason, 'PURPOSE_TYPE_NOT_WHITELISTED')
     end),
 }
