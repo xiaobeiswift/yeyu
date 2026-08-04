@@ -60,6 +60,7 @@ local INTERACTABLE_FIELDS = {
     interactable_id = true,
     state = true,
     receipt_id = true,
+    reward_receipt_id = true,
 }
 
 local function failure(code, message_key, reason, details)
@@ -189,6 +190,7 @@ function WorldSaveCodec.encode(state)
             interactable_id = row.interactable_id or key,
             state = row.state,
             receipt_id = row.receipt_id,
+            reward_receipt_id = row.reward_receipt_id,
         }
     end
 
@@ -376,10 +378,17 @@ function WorldSaveCodec.decode(bundle)
                 return invalid('INTERACTABLE_RECEIPT_INVALID')
             end
         end
+        if row.reward_receipt_id ~= nil then
+            local reward_check = validate_derived(row.reward_receipt_id, 'reward_receipt_id')
+            if not reward_check.ok then
+                return invalid('REWARD_RECEIPT_INVALID')
+            end
+        end
         state.interactables[row.interactable_id] = {
             interactable_id = row.interactable_id,
             state = row.state,
             receipt_id = row.receipt_id,
+            reward_receipt_id = row.reward_receipt_id,
         }
     end
 

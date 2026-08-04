@@ -58,6 +58,7 @@ local function ensure_interactable_row(state, interactable)
             interactable_id = interactable.id,
             state = interactable.initial_state or 'AVAILABLE',
             receipt_id = nil,
+            reward_receipt_id = nil,
         }
         state.interactables[interactable.id] = row
     end
@@ -523,6 +524,7 @@ function WorldState.get_interactable_state(state, catalog, interactable_id)
         interactable_id = row.interactable_id,
         state = row.state,
         receipt_id = row.receipt_id,
+        reward_receipt_id = row.reward_receipt_id,
         interactable_type = interactable.interactable_type,
         location_id = interactable.location_id,
     })
@@ -583,6 +585,8 @@ function WorldState.open_chest(state, catalog, input)
                 already_opened = true,
                 interactable_id = interactable.id,
                 state = row.state,
+                reward_id = interactable.action_ref_id,
+                reward_receipt_id = row.reward_receipt_id,
                 chest_event = nil,
             })
         end
@@ -606,8 +610,15 @@ function WorldState.open_chest(state, catalog, input)
         )
     end
 
-    -- V0: no economy grant yet; OPENED is the durable consume fact.
-    local terminal_state = 'OPENED'
+    local terminal_state = raw_get(input, 'terminal_state')
+    if terminal_state == nil then
+        terminal_state = 'OPENED'
+    end
+    if terminal_state ~= 'OPENED' and terminal_state ~= 'REWARD_PENDING' then
+        return invalid('TERMINAL_STATE_INVALID', { terminal_state = terminal_state })
+    end
+    local reward_receipt_id = raw_get(input, 'reward_receipt_id') or open_receipt_id
+
     local chest_event = WorldEvents.build_chest_opened(
         state,
         interactable,
@@ -627,6 +638,7 @@ function WorldState.open_chest(state, catalog, input)
 
     row.state = terminal_state
     row.receipt_id = open_receipt_id
+    row.reward_receipt_id = reward_receipt_id
     state.world_revision = state.world_revision + 1
     state.event_receipts[chest_event.value.event_id] = {
         event_id = chest_event.value.event_id,
@@ -647,6 +659,7 @@ function WorldState.open_chest(state, catalog, input)
         interactable_id = interactable.id,
         state = terminal_state,
         reward_id = interactable.action_ref_id,
+        reward_receipt_id = reward_receipt_id,
         chest_event = chest_event.value,
         world_revision = state.world_revision,
     })

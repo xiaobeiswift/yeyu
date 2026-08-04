@@ -7,7 +7,12 @@ local WorldState = require 'wzx.domain.world.world_state'
 local WorldSaveCodec = require 'wzx.domain.world.world_save_codec'
 local WorldService = require 'wzx.application.use_cases.world.world_service'
 local WorldQuestBridge = require 'wzx.application.use_cases.world.world_quest_bridge'
+local WorldErrorCodes = require 'wzx.domain.world.error_codes'
 local FakeWorldStore = require 'wzx.adapters.fake.world.fake_world_store'
+local FakeEconomyStore = require 'wzx.adapters.fake.economy.fake_economy_store'
+local CurrencyCatalog = require 'wzx.config.schema.economy.catalog'
+local RewardCatalog = require 'wzx.config.schema.reward.catalog'
+local EconomyService = require 'wzx.application.use_cases.economy.economy_service'
 local QuestCatalog = require 'wzx.config.schema.quest.catalog'
 local QuestService = require 'wzx.application.use_cases.quest.quest_service'
 
@@ -123,6 +128,65 @@ end
 
 local function seal_world(mutate)
     return WorldCatalog.seal(fixture_world_source(mutate))
+end
+
+local function build_currency_catalog()
+    local built = CurrencyCatalog.build({
+        currency_definitions = {
+            {
+                id = 'currency_copper',
+                schema_version = 1,
+                category = 'SOFT',
+                balance_cap = 10000,
+                source_policy_id = 'currpolicy_copper_source',
+                sink_policy_id = 'currpolicy_copper_sink',
+                name_key = 'currency.copper.name',
+            },
+        },
+    })
+    assert.equal(built.ok, true)
+    return built.value
+end
+
+local function build_reward_catalog()
+    local built = RewardCatalog.build({
+        reward_bundles = {
+            {
+                id = 'reward_inn_chest',
+                schema_version = 1,
+                entries = {
+                    {
+                        entry_order = 1,
+                        entry_type = 'CURRENCY',
+                        target_id = 'currency_copper',
+                        quantity_min = 25,
+                        quantity_max = 25,
+                    },
+                },
+            },
+        },
+    })
+    assert.equal(built.ok, true)
+    return built.value
+end
+
+local function bind_world_with_economy()
+    local world_sealed = seal_world()
+    assert.equal(world_sealed.ok, true)
+    local store = FakeEconomyStore.new()
+    assert.equal(store.ok, true)
+    local economy = EconomyService.bind({
+        currency_catalog = build_currency_catalog(),
+        reward_catalog = build_reward_catalog(),
+        store = store.value,
+    })
+    assert.equal(economy.ok, true)
+    local world = WorldService.bind({
+        catalog = world_sealed.value,
+        economy_service = economy.value,
+    })
+    assert.equal(world.ok, true)
+    return world.value, economy.value
 end
 
 local function seal_quest_reach()
@@ -461,7 +525,7 @@ return {
     end),
 
     case('bridge open chest advances quest OPEN_CHEST objective', function()
-        local world_sealed = seal_world()
+        local world, economy = bind_world_with_economy()
         local quest_sealed = QuestCatalog.seal({
             objective_definitions = {
                 {
@@ -509,12 +573,9 @@ return {
                 },
             },
         })
-        assert.equal(world_sealed.ok, true)
         assert.equal(quest_sealed.ok, true)
 
-        local world = WorldService.bind({ catalog = world_sealed.value })
         local quest = QuestService.bind({ catalog = quest_sealed.value })
-        assert.equal(world.ok, true)
         assert.equal(quest.ok, true)
         quest.value:accept({
             quest_id = 'quest_side_chest',
@@ -523,7 +584,7 @@ return {
         })
 
         local bundled = WorldQuestBridge.open_chest_and_relay(
-            world.value,
+            world,
             quest.value,
             {
                 interactable_id = 'interact_inn_chest',
@@ -532,10 +593,45 @@ return {
         )
         assert.equal(bundled.ok, true, 'open_chest_and_relay')
         assert.equal(bundled.value.quest_relay.applied, true)
+        assert.equal(bundled.value.open.reward.status, 'COMMITTED')
+        assert.equal(economy:get_balance('currency_copper').value.balance, 25)
 
         local run_view = quest.value:get_run('qrun_chest_01')
         assert.equal(run_view.ok, true)
         assert.equal(run_view.value.run.status, 'READY_TO_TURN_IN')
         assert.equal(run_view.value.objectives[1].status, 'COMPLETE')
+    end),
+
+    case('service open chest requires economy and grants reward', function()
+        local sealed = seal_world()
+        local bare = WorldService.bind({ catalog = sealed.value })
+        assert.equal(bare.ok, true)
+        local denied = bare.value:open_chest({
+            interactable_id = 'interact_inn_chest',
+            open_receipt_id = 'rcpt_open_no_econ_01',
+        })
+        assert.equal(denied.ok, false)
+        assert.equal(denied.error.code, WorldErrorCodes.WORLD_REWARD_SERVICE_REQUIRED)
+
+        local world, economy = bind_world_with_economy()
+        local opened = world:open_chest({
+            interactable_id = 'interact_inn_chest',
+            open_receipt_id = 'rcpt_open_econ_01',
+            command_id = 'cmd_open_econ_01',
+        })
+        assert.equal(opened.ok, true, 'open with economy')
+        assert.equal(opened.value.state, 'OPENED')
+        assert.equal(opened.value.reward.status, 'COMMITTED')
+        assert.equal(opened.value.reward.source_type, 'CHEST_OPEN')
+        assert.equal(economy:get_balance('currency_copper').value.balance, 25)
+
+        local replay = world:open_chest({
+            interactable_id = 'interact_inn_chest',
+            open_receipt_id = 'rcpt_open_econ_01',
+            command_id = 'cmd_open_econ_01',
+        })
+        assert.equal(replay.ok, true)
+        assert.equal(replay.value.already_opened, true)
+        assert.equal(economy:get_balance('currency_copper').value.balance, 25)
     end),
 }
