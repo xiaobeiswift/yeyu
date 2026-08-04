@@ -142,7 +142,7 @@ function Validation.sorted_unique_strings(contract_name, field, value)
                 index = index,
             })
         end
-        if previous ~= nil and previous >= current then
+        if previous ~= nil and not Ordered.bytewise_string_less(previous, current) then
             return Validation.invalid(contract_name, field, 'STRICT_ASCENDING_ORDER_REQUIRED', {
                 index = index,
             })

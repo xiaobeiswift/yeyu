@@ -3,6 +3,24 @@ local Result = require 'wzx.domain.common.result'
 local Ordered = {}
 local MAX_SAFE_INTEGER = 9007199254740991
 
+-- Lua 5.1 string relational operators may follow the process collation locale.
+-- Canonical gameplay order is unsigned byte order instead.
+function Ordered.bytewise_string_less(left, right)
+    if type(left) ~= 'string' or type(right) ~= 'string' then
+        return false
+    end
+    local shared_length = math.min(#left, #right)
+    local index
+    for index = 1, shared_length do
+        local left_byte = left:byte(index)
+        local right_byte = right:byte(index)
+        if left_byte ~= right_byte then
+            return left_byte < right_byte
+        end
+    end
+    return #left < #right
+end
+
 function Ordered.is_dense_array(value)
     if type(value) ~= 'table' then
         return false
@@ -72,7 +90,7 @@ function Ordered.sorted_string_keys(value)
         end
         keys[#keys + 1] = key
     end
-    table.sort(keys)
+    table.sort(keys, Ordered.bytewise_string_less)
     return Result.ok(keys)
 end
 
