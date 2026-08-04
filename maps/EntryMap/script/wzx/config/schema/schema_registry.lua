@@ -4,16 +4,32 @@ local Ordered = require 'wzx.domain.common.ordered'
 local RuntimeId = require 'wzx.domain.common.runtime_id'
 
 local SchemaRegistry = {}
+local bytewise_string_less = Ordered.bytewise_string_less
+local invalid_argument_code = ErrorCodes.INVALID_ARGUMENT
+local next_value = next
+local pcall_value = pcall
+local raw_get = rawget
+local registry_duplicate_code = ErrorCodes.REGISTRY_DUPLICATE
+local registry_entry_not_found_code = ErrorCodes.REGISTRY_ENTRY_NOT_FOUND
+local registry_sealed_code = ErrorCodes.REGISTRY_SEALED
+local result_err = Result.err
+local result_ok = Result.ok
+local result_validate = Result.validate
+local schema_validation_failed_code = ErrorCodes.SCHEMA_VALIDATION_FAILED
+local set_metatable = setmetatable
+local table_sort = table.sort
+local type_value = type
+local validate_component = RuntimeId.validate_component
 local Registry = {}
 Registry.__index = Registry
 Registry.__newindex = function()
     error('schema registry is read-only', 2)
 end
 Registry.__metatable = false
-local STATES = setmetatable({}, { __mode = 'k' })
+local STATES = set_metatable({}, { __mode = 'k' })
 
 local function copy_value(value, seen)
-    if type(value) ~= 'table' then
+    if type_value(value) ~= 'table' then
         return value
     end
 
@@ -25,7 +41,8 @@ local function copy_value(value, seen)
     local copy = {}
     local key
     local item
-    for key, item in pairs(value) do
+    key, item = next_value(value, nil)
+    while key ~= nil do
         local copied_key, key_error = copy_value(key, seen)
         if key_error then
             seen[value] = nil
@@ -38,6 +55,7 @@ local function copy_value(value, seen)
             return nil, item_error
         end
         copy[copied_key] = copied_item
+        key, item = next_value(value, key)
     end
     seen[value] = nil
     return copy
@@ -46,69 +64,80 @@ end
 local function clone(value)
     local copy, copy_error = copy_value(value, {})
     if copy_error then
-        return Result.err(
-            ErrorCodes.SCHEMA_VALIDATION_FAILED,
+        return result_err(
+            schema_validation_failed_code,
             'error.foundation.registry_entry_cycle',
             false
         )
     end
-    return Result.ok(copy)
+    return result_ok(copy)
 end
 
 local function validate_options(options)
-    if type(options) ~= 'table' then
-        return Result.err(
-            ErrorCodes.INVALID_ARGUMENT,
+    if type_value(options) ~= 'table' then
+        return result_err(
+            invalid_argument_code,
             'error.foundation.registry_options_invalid',
             false
         )
     end
 
-    local name_result = RuntimeId.validate_component(options.registry_name, 'registry_name')
+    local name_result = validate_component(
+        raw_get(options, 'registry_name'),
+        'registry_name'
+    )
     if not name_result.ok then
         return name_result
     end
 
-    if type(options.id_field) ~= 'string' or options.id_field == '' then
-        return Result.err(
-            ErrorCodes.INVALID_ARGUMENT,
+    if type_value(raw_get(options, 'id_field')) ~= 'string'
+        or raw_get(options, 'id_field') == ''
+    then
+        return result_err(
+            invalid_argument_code,
             'error.foundation.registry_id_field_invalid',
             false
         )
     end
 
-    if options.normalize_entry ~= nil and type(options.normalize_entry) ~= 'function' then
-        return Result.err(
-            ErrorCodes.INVALID_ARGUMENT,
+    if raw_get(options, 'normalize_entry') ~= nil
+        and type_value(raw_get(options, 'normalize_entry')) ~= 'function'
+    then
+        return result_err(
+            invalid_argument_code,
             'error.foundation.registry_normalizer_invalid',
             false
         )
     end
 
-    if options.validate_entry ~= nil and type(options.validate_entry) ~= 'function' then
-        return Result.err(
-            ErrorCodes.INVALID_ARGUMENT,
+    if raw_get(options, 'validate_entry') ~= nil
+        and type_value(raw_get(options, 'validate_entry')) ~= 'function'
+    then
+        return result_err(
+            invalid_argument_code,
             'error.foundation.registry_validator_invalid',
             false
         )
     end
 
-    if options.validate_id ~= nil and type(options.validate_id) ~= 'function' then
-        return Result.err(
-            ErrorCodes.INVALID_ARGUMENT,
+    if raw_get(options, 'validate_id') ~= nil
+        and type_value(raw_get(options, 'validate_id')) ~= 'function'
+    then
+        return result_err(
+            invalid_argument_code,
             'error.foundation.registry_id_validator_invalid',
             false
         )
     end
 
-    return Result.ok(true)
+    return result_ok(true)
 end
 
 local function validate_result_contract(value, message_key)
-    local checked = Result.validate(value)
+    local checked = result_validate(value)
     if not checked.ok then
-        return Result.err(
-            ErrorCodes.SCHEMA_VALIDATION_FAILED,
+        return result_err(
+            schema_validation_failed_code,
             message_key,
             false
         )
@@ -117,10 +146,10 @@ local function validate_result_contract(value, message_key)
 end
 
 local function call_result_contract(callback, argument, invalid_message_key, raised_message_key)
-    local succeeded, value = pcall(callback, argument)
+    local succeeded, value = pcall_value(callback, argument)
     if not succeeded then
-        return Result.err(
-            ErrorCodes.SCHEMA_VALIDATION_FAILED,
+        return result_err(
+            schema_validation_failed_code,
             raised_message_key,
             false
         )
@@ -134,33 +163,33 @@ function SchemaRegistry.new(options)
         return options_result
     end
 
-    local registry = setmetatable({}, Registry)
+    local registry = set_metatable({}, Registry)
     STATES[registry] = {
-        registry_name = options.registry_name,
-        id_field = options.id_field,
-        normalize_entry = options.normalize_entry,
-        validate_entry = options.validate_entry,
-        validate_id = options.validate_id,
+        registry_name = raw_get(options, 'registry_name'),
+        id_field = raw_get(options, 'id_field'),
+        normalize_entry = raw_get(options, 'normalize_entry'),
+        validate_entry = raw_get(options, 'validate_entry'),
+        validate_id = raw_get(options, 'validate_id'),
         entries = {},
         sealed = false,
     }
-    return Result.ok(registry)
+    return result_ok(registry)
 end
 
 function Registry:register(entry)
     local state = STATES[self]
     if state.sealed then
-        return Result.err(
-            ErrorCodes.REGISTRY_SEALED,
+        return result_err(
+            registry_sealed_code,
             'error.foundation.registry_sealed',
             false,
             { registry_name = state.registry_name }
         )
     end
 
-    if type(entry) ~= 'table' then
-        return Result.err(
-            ErrorCodes.SCHEMA_VALIDATION_FAILED,
+    if type_value(entry) ~= 'table' then
+        return result_err(
+            schema_validation_failed_code,
             'error.foundation.registry_entry_invalid',
             false,
             { registry_name = state.registry_name }
@@ -181,19 +210,19 @@ function Registry:register(entry)
         normalized = normalized_result.value
     end
 
-    if type(normalized) ~= 'table' then
-        return Result.err(
-            ErrorCodes.SCHEMA_VALIDATION_FAILED,
+    if type_value(normalized) ~= 'table' then
+        return result_err(
+            schema_validation_failed_code,
             'error.foundation.registry_normalized_entry_invalid',
             false,
             { registry_name = state.registry_name }
         )
     end
 
-    local entry_id = normalized[state.id_field]
-    if type(entry_id) ~= 'string' or entry_id == '' then
-        return Result.err(
-            ErrorCodes.SCHEMA_VALIDATION_FAILED,
+    local entry_id = raw_get(normalized, state.id_field)
+    if type_value(entry_id) ~= 'string' or entry_id == '' then
+        return result_err(
+            schema_validation_failed_code,
             'error.foundation.registry_entry_id_invalid',
             false,
             {
@@ -228,8 +257,8 @@ function Registry:register(entry)
     end
 
     if state.entries[entry_id] ~= nil then
-        return Result.err(
-            ErrorCodes.REGISTRY_DUPLICATE,
+        return result_err(
+            registry_duplicate_code,
             'error.foundation.registry_duplicate',
             false,
             {
@@ -244,15 +273,15 @@ function Registry:register(entry)
         return copied
     end
     state.entries[entry_id] = copied.value
-    return Result.ok(entry_id)
+    return result_ok(entry_id)
 end
 
 function Registry:get(entry_id)
     local state = STATES[self]
     local entry = state.entries[entry_id]
     if entry == nil then
-        return Result.err(
-            ErrorCodes.REGISTRY_ENTRY_NOT_FOUND,
+        return result_err(
+            registry_entry_not_found_code,
             'error.foundation.registry_entry_not_found',
             false,
             {
@@ -272,10 +301,12 @@ function Registry:list()
     local state = STATES[self]
     local ids = {}
     local entry_id
-    for entry_id in pairs(state.entries) do
+    entry_id = next_value(state.entries, nil)
+    while entry_id ~= nil do
         ids[#ids + 1] = entry_id
+        entry_id = next_value(state.entries, entry_id)
     end
-    table.sort(ids, Ordered.bytewise_string_less)
+    table_sort(ids, bytewise_string_less)
 
     local entries = {}
     local index
@@ -286,12 +317,12 @@ function Registry:list()
         end
         entries[index] = copied.value
     end
-    return Result.ok(entries)
+    return result_ok(entries)
 end
 
 function Registry:seal()
     STATES[self].sealed = true
-    return Result.ok(true)
+    return result_ok(true)
 end
 
 function Registry:is_sealed()

@@ -189,4 +189,90 @@ return {
             pairs = 0,
         })
     end),
+
+    case('runtime id and ordered helpers retain captured builtin authorities', function()
+        local original_type = _G.type
+        local original_getmetatable = _G.getmetatable
+        local original_next = _G.next
+        local original_rawget = _G.rawget
+        local original_tostring = _G.tostring
+        local original_floor = math.floor
+        local original_huge = math.huge
+        local original_min = math.min
+        local original_math_type = math.type
+        local original_byte = string.byte
+        local original_char = string.char
+        local original_find = string.find
+        local original_gmatch = string.gmatch
+        local original_match = string.match
+        local original_sub = string.sub
+        local original_concat = table.concat
+        local original_sort = table.sort
+        local protected_call = pcall
+        local monkeypatch_calls = 0
+        local function forbidden_patch()
+            monkeypatch_calls = monkeypatch_calls + 1
+            error('captured builtin authority was bypassed')
+        end
+        local hostile = setmetatable({}, { __index = function() return 'forged' end })
+
+        _G.type = forbidden_patch
+        _G.getmetatable = forbidden_patch
+        _G.next = forbidden_patch
+        _G.rawget = forbidden_patch
+        _G.tostring = forbidden_patch
+        math.floor = forbidden_patch
+        math.huge = 0
+        math.min = forbidden_patch
+        math.type = forbidden_patch
+        string.byte = forbidden_patch
+        string.char = forbidden_patch
+        string.find = forbidden_patch
+        string.gmatch = forbidden_patch
+        string.match = forbidden_patch
+        string.sub = forbidden_patch
+        table.concat = forbidden_patch
+        table.sort = forbidden_patch
+
+        local call_ok, valid_content, invalid_content, invalid_derived,
+            invalid_reference, composed, dense, hostile_dense, keys = protected_call(function()
+                return RuntimeId.validate_content('char_hero', 'char_', 'id'),
+                    RuntimeId.validate_content('item_intruder', 'char_', 'id'),
+                    RuntimeId.validate_derived('combat::7', 'id'),
+                    RuntimeId.validate_source_reference('foo::bar', 'source'),
+                    RuntimeId.compose({ 'combat', 'player-1', 17 }),
+                    Ordered.is_dense_array({ 'a', 'b' }),
+                    Ordered.is_dense_array(hostile),
+                    Ordered.sorted_string_keys({ z = true, a = true })
+            end)
+
+        _G.type = original_type
+        _G.getmetatable = original_getmetatable
+        _G.next = original_next
+        _G.rawget = original_rawget
+        _G.tostring = original_tostring
+        math.floor = original_floor
+        math.huge = original_huge
+        math.min = original_min
+        math.type = original_math_type
+        string.byte = original_byte
+        string.char = original_char
+        string.find = original_find
+        string.gmatch = original_gmatch
+        string.match = original_match
+        string.sub = original_sub
+        table.concat = original_concat
+        table.sort = original_sort
+
+        assert.equal(call_ok, true)
+        assert.equal(valid_content.ok, true)
+        assert.error_code(invalid_content, 'ID_INVALID')
+        assert.error_code(invalid_derived, 'ID_INVALID')
+        assert.error_code(invalid_reference, 'ID_INVALID')
+        assert.equal(composed.value, 'combat:player-1:17')
+        assert.equal(dense, true)
+        assert.equal(hostile_dense, false)
+        assert.deep_equal(keys.value, { 'a', 'z' })
+        assert.equal(monkeypatch_calls, 0)
+    end),
 }

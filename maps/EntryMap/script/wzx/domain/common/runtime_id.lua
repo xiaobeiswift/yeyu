@@ -5,9 +5,16 @@ local Ordered = require 'wzx.domain.common.ordered'
 local RuntimeId = {}
 local decimal_encode = DecimalInteger.encode
 local is_dense_array = Ordered.is_dense_array
+local raw_get = rawget
 local result_err = Result.err
 local result_ok = Result.ok
+local string_find = string.find
+local string_gmatch = string.gmatch
 local string_match = string.match
+local string_sub = string.sub
+local table_concat = table.concat
+local tostring_value = tostring
+local type_value = type
 
 local COMPONENT_MAX_BYTES = 64
 local DERIVED_MAX_BYTES = 192
@@ -16,7 +23,7 @@ local SOURCE_REFERENCE_MAX_BYTES = 320
 local STABLE_ORDER_KEY_MAX_BYTES = 512
 
 local function is_component(value)
-    return type(value) == 'string'
+    return type_value(value) == 'string'
         and #value >= 1
         and #value <= COMPONENT_MAX_BYTES
         and string_match(value, '^[A-Za-z0-9][A-Za-z0-9_.%-]*$') ~= nil
@@ -34,12 +41,12 @@ end
 RuntimeId.validate_component = validate_component
 
 function RuntimeId.validate_derived(value, field_name)
-    if type(value) ~= 'string'
+    if type_value(value) ~= 'string'
         or #value < 1
         or #value > DERIVED_MAX_BYTES
         or string_match(value, '^[A-Za-z0-9][A-Za-z0-9_.:%-]*$') == nil
-        or value:find('::', 1, true) ~= nil
-        or value:sub(-1) == ':'
+        or string_find(value, '::', 1, true) ~= nil
+        or string_sub(value, -1) == ':'
     then
         return result_err('ID_INVALID', 'error.foundation.derived_id_invalid', false, {
             field = field_name,
@@ -60,7 +67,7 @@ function RuntimeId.validate_derived(value, field_name)
     end
 
     local component
-    for component in value:gmatch('[^:]+') do
+    for component in string_gmatch(value, '[^:]+') do
         if not is_component(component) then
             return result_err('ID_INVALID', 'error.foundation.derived_id_component_invalid', false, {
                 field = field_name,
@@ -73,11 +80,11 @@ function RuntimeId.validate_derived(value, field_name)
 end
 
 function RuntimeId.validate_content(value, prefix, field_name)
-    if type(value) ~= 'string'
+    if type_value(value) ~= 'string'
         or #value < 1
         or #value > CONTENT_MAX_BYTES
         or string_match(value, '^[a-z][a-z0-9_]*$') == nil
-        or (prefix ~= nil and value:sub(1, #prefix) ~= prefix)
+        or (prefix ~= nil and string_sub(value, 1, #prefix) ~= prefix)
     then
         return result_err('ID_INVALID', 'error.foundation.content_id_invalid', false, {
             field = field_name,
@@ -89,12 +96,12 @@ function RuntimeId.validate_content(value, prefix, field_name)
 end
 
 local function validate_reference(value, maximum_bytes, field_name)
-    if type(value) ~= 'string'
+    if type_value(value) ~= 'string'
         or #value < 1
         or #value > maximum_bytes
         or string_match(value, '^[A-Za-z0-9][A-Za-z0-9_.:%-]*$') == nil
-        or value:find('::', 1, true) ~= nil
-        or value:sub(-1) == ':'
+        or string_find(value, '::', 1, true) ~= nil
+        or string_sub(value, -1) == ':'
     then
         return result_err('ID_INVALID', 'error.foundation.reference_key_invalid', false, {
             field = field_name,
@@ -103,7 +110,7 @@ local function validate_reference(value, maximum_bytes, field_name)
     end
 
     local component
-    for component in value:gmatch('[^:]+') do
+    for component in string_gmatch(value, '[^:]+') do
         if #component > CONTENT_MAX_BYTES
             or string_match(component, '^[A-Za-z0-9][A-Za-z0-9_.%-]*$') == nil
         then
@@ -137,8 +144,8 @@ function RuntimeId.compose(parts)
     local normalized = {}
     local i
     for i = 1, #parts do
-        local part = rawget(parts, i)
-        if type(part) == 'number' then
+        local part = raw_get(parts, i)
+        if type_value(part) == 'number' then
             local encoded = decimal_encode(part)
             if part < 1 or encoded == nil then
                 return result_err('ID_INVALID', 'error.foundation.derived_id_number_invalid', false, {
@@ -148,14 +155,14 @@ function RuntimeId.compose(parts)
             part = encoded
         end
 
-        local checked = validate_component(part, 'part_' .. tostring(i))
+        local checked = validate_component(part, 'part_' .. tostring_value(i))
         if not checked.ok then
             return checked
         end
         normalized[i] = part
     end
 
-    local value = table.concat(normalized, ':')
+    local value = table_concat(normalized, ':')
     if #value > DERIVED_MAX_BYTES then
         return result_err('ID_TOO_LONG', 'error.foundation.derived_id_too_long', false, {
             max_bytes = DERIVED_MAX_BYTES,

@@ -5,8 +5,11 @@ local CombatSnapshot = require 'wzx.domain.contracts.combat_snapshot'
 local Formation = require 'wzx.domain.contracts.formation'
 local LightnessTraversalProfile = require 'wzx.domain.contracts.lightness_traversal_profile'
 local RewardEntry = require 'wzx.domain.contracts.reward_entry'
+local Result = require 'wzx.domain.common.result'
+local RuntimeId = require 'wzx.domain.common.runtime_id'
 local SaveEnvelope = require 'wzx.domain.save.save_envelope'
 local StatContribution = require 'wzx.domain.contracts.stat_contribution'
+local ContractValidation = require 'wzx.domain.contracts.validation'
 
 local case = Harness.case
 local assert = Harness.assert
@@ -527,6 +530,25 @@ return {
         assert.error_reason(RewardEntry.validate(experience), 'CHARACTER_TARGET_REQUIRED')
         experience.target_character_id = 'char_hero'
         assert.equal(RewardEntry.validate(experience).ok, true)
+        experience.target_character_id = 'char_other'
+        assert.error_reason(
+            RewardEntry.validate(experience),
+            'CHARACTER_TARGET_MISMATCH'
+        )
+        experience.target_character_id = 'char_hero'
+
+        local affinity = {
+            entry_type = 'AFFINITY',
+            target_id = 'char_partner',
+            target_character_id = 'char_other',
+            quantity = 1,
+            metadata = {},
+            entry_order = 2,
+        }
+        assert.error_reason(
+            RewardEntry.validate(affinity),
+            'CHARACTER_TARGET_MISMATCH'
+        )
 
         local unlock = {
             entry_type = 'UNLOCK_FLAG',
@@ -607,6 +629,66 @@ return {
         assert.equal(RewardEntry.validate(boundary).ok, true)
         boundary.target_id = boundary.target_id .. 'a'
         assert.error_reason(RewardEntry.validate(boundary), 'TARGET_ID_PREFIX_INVALID')
+    end),
+
+    case('reward entries retain captured validation authorities', function()
+        local original_result_ok = Result.ok
+        local original_validate_content = RuntimeId.validate_content
+        local original_enum = ContractValidation.enum
+        local original_first = ContractValidation.first
+        local original_flat_map = ContractValidation.flat_map
+        local original_identifier = ContractValidation.identifier
+        local original_integer = ContractValidation.integer
+        local original_invalid = ContractValidation.invalid
+        local original_no_unknown_fields = ContractValidation.no_unknown_fields
+        local monkeypatch_calls = 0
+        local function forbidden_patch()
+            monkeypatch_calls = monkeypatch_calls + 1
+            error('captured reward authority was bypassed')
+        end
+
+        Result.ok = forbidden_patch
+        RuntimeId.validate_content = forbidden_patch
+        ContractValidation.enum = forbidden_patch
+        ContractValidation.first = forbidden_patch
+        ContractValidation.flat_map = forbidden_patch
+        ContractValidation.identifier = forbidden_patch
+        ContractValidation.integer = forbidden_patch
+        ContractValidation.invalid = forbidden_patch
+        ContractValidation.no_unknown_fields = forbidden_patch
+
+        local call_ok, valid, mismatch, unknown = pcall(function()
+            local entry = {
+                entry_type = 'CHARACTER_XP',
+                target_id = 'char_hero',
+                target_character_id = 'char_hero',
+                quantity = 10,
+                metadata = {},
+                entry_order = 1,
+            }
+            local valid_result = RewardEntry.validate(entry)
+            entry.target_character_id = 'char_other'
+            local mismatch_result = RewardEntry.validate(entry)
+            entry.target_character_id = 'char_hero'
+            entry.unexpected = true
+            return valid_result, mismatch_result, RewardEntry.validate(entry)
+        end)
+
+        Result.ok = original_result_ok
+        RuntimeId.validate_content = original_validate_content
+        ContractValidation.enum = original_enum
+        ContractValidation.first = original_first
+        ContractValidation.flat_map = original_flat_map
+        ContractValidation.identifier = original_identifier
+        ContractValidation.integer = original_integer
+        ContractValidation.invalid = original_invalid
+        ContractValidation.no_unknown_fields = original_no_unknown_fields
+
+        assert.equal(call_ok, true)
+        assert.equal(valid.ok, true)
+        assert.error_reason(mismatch, 'CHARACTER_TARGET_MISMATCH')
+        assert.error_reason(unknown, 'UNKNOWN_FIELD')
+        assert.equal(monkeypatch_calls, 0)
     end),
 
     case('lightness capabilities require canonical order and jump dependencies', function()

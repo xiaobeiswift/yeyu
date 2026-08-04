@@ -11,14 +11,28 @@ local LevelCurve = require 'wzx.config.schema.character.level_curve'
 local TalentDefinition = require 'wzx.config.schema.character.talent_definition'
 
 local Catalog = {}
+local character_build_invalid = CharacterErrorCodes.CHARACTER_BUILD_INVALID
+local error_value = error
+local get_metatable = getmetatable
+local is_dense_array = Ordered.is_dense_array
+local result_err = Result.err
+local result_ok = Result.ok
+local schema_registry_new = SchemaRegistry.new
+local set_metatable = setmetatable
+local tostring_value = tostring
+local type_value = type
+local validate_content_id = RuntimeId.validate_content
+local validation_dense_array = Validation.dense_array
+local validation_invalid = Validation.invalid
+local validation_no_unknown_fields = Validation.no_unknown_fields
 local CatalogView = {}
 CatalogView.__index = CatalogView
 CatalogView.__newindex = function()
-    error('character catalog is read-only', 2)
+    error_value('character catalog is read-only', 2)
 end
 CatalogView.__metatable = false
 
-local STATES = setmetatable({}, { __mode = 'k' })
+local STATES = set_metatable({}, { __mode = 'k' })
 local SCHEMA = 'CharacterCatalog'
 local COLLECTION_ORDER = {
     'character_definitions',
@@ -52,11 +66,11 @@ local COLLECTION_SPECS = {
 }
 
 local function invalid(field, reason, details)
-    return Validation.invalid(SCHEMA, field, reason, details)
+    return validation_invalid(SCHEMA, field, reason, details)
 end
 
 local function validate_source(source)
-    local err = Validation.no_unknown_fields(SCHEMA, source, COLLECTION_FIELDS)
+    local err = validation_no_unknown_fields(SCHEMA, source, COLLECTION_FIELDS)
     if err ~= nil then
         return err
     end
@@ -64,7 +78,7 @@ local function validate_source(source)
     local index
     for index = 1, #COLLECTION_ORDER do
         local collection_name = COLLECTION_ORDER[index]
-        err = Validation.dense_array(
+        err = validation_dense_array(
             SCHEMA,
             collection_name,
             source[collection_name]
@@ -73,12 +87,12 @@ local function validate_source(source)
             return err
         end
     end
-    return Result.ok(true)
+    return result_ok(true)
 end
 
 local function build_registry(collection_name, entries)
     local spec = COLLECTION_SPECS[collection_name]
-    local created = SchemaRegistry.new({
+    local created = schema_registry_new({
         registry_name = spec.registry_name,
         id_field = 'id',
         normalize_entry = spec.normalize_entry,
@@ -95,7 +109,7 @@ local function build_registry(collection_name, entries)
             return registered
         end
     end
-    return Result.ok(registry)
+    return result_ok(registry)
 end
 
 local function missing_reference(character_id, field, reference_id, collection_name)
@@ -139,7 +153,7 @@ local function validate_character_references(registries)
             if not registries.talent_definitions:contains(talent_id) then
                 return missing_reference(
                     character.id,
-                    'default_talent_ids[' .. tostring(talent_index) .. ']',
+                    'default_talent_ids[' .. tostring_value(talent_index) .. ']',
                     talent_id,
                     'talent_definitions'
                 )
@@ -152,7 +166,7 @@ local function validate_character_references(registries)
             local talent = talent_result.value
             if not character.deprecated and talent.deprecated then
                 return invalid(
-                    'default_talent_ids[' .. tostring(talent_index) .. ']',
+                    'default_talent_ids[' .. tostring_value(talent_index) .. ']',
                     'DEPRECATED_DEFAULT_TALENT_REFERENCE',
                     {
                         character_id = character.id,
@@ -166,7 +180,7 @@ local function validate_character_references(registries)
                 local conflicting_talent_id = talent_by_exclusive_group[exclusive_group]
                 if conflicting_talent_id ~= nil then
                     return invalid(
-                        'default_talent_ids[' .. tostring(talent_index) .. ']',
+                        'default_talent_ids[' .. tostring_value(talent_index) .. ']',
                         'DEFAULT_TALENT_EXCLUSIVE_GROUP_CONFLICT',
                         {
                             character_id = character.id,
@@ -180,12 +194,12 @@ local function validate_character_references(registries)
             end
         end
     end
-    return Result.ok(true)
+    return result_ok(true)
 end
 
 local function resolve_registry(self, collection_name)
     local state = STATES[self]
-    if state == nil or type(collection_name) ~= 'string' then
+    if state == nil or type_value(collection_name) ~= 'string' then
         return nil
     end
     return state.registries[collection_name]
@@ -193,10 +207,10 @@ end
 
 local function invalid_collection(collection_name)
     local details = nil
-    if type(collection_name) == 'string' then
+    if type_value(collection_name) == 'string' then
         details = { collection_name = collection_name }
     end
-    return Result.err(
+    return result_err(
         ErrorCodes.INVALID_ARGUMENT,
         'error.character.catalog_collection_invalid',
         false,
@@ -207,7 +221,7 @@ end
 local function invalid_authority(reason, details)
     details = details or {}
     details.reason = reason
-    return Result.err(
+    return result_err(
         ErrorCodes.INVALID_ARGUMENT,
         'error.character.catalog_authority_invalid',
         false,
@@ -218,8 +232,8 @@ end
 local function invalid_build(reason, details)
     details = details or {}
     details.reason = reason
-    return Result.err(
-        CharacterErrorCodes.CHARACTER_BUILD_INVALID,
+    return result_err(
+        character_build_invalid,
         'error.character.build_invalid',
         false,
         details
@@ -279,20 +293,20 @@ function Catalog.build(source)
         end
     end
 
-    local view = setmetatable({}, CatalogView)
+    local view = set_metatable({}, CatalogView)
     STATES[view] = { registries = registries }
-    return Result.ok(view)
+    return result_ok(view)
 end
 
 -- This is the trusted projection boundary used by application character rules.
 -- It verifies the sealed catalog identity before returning only domain-relevant
 -- facts and the curve already cross-checked during Catalog.build.
-function CatalogView:resolve_character(character_id)
+local function resolve_character(self, character_id)
     local state = STATES[self]
     if state == nil then
         return invalid_authority('CATALOG_AUTHORITY_REQUIRED')
     end
-    local checked_id = RuntimeId.validate_content(
+    local checked_id = validate_content_id(
         character_id,
         'char_',
         'character_id'
@@ -318,7 +332,7 @@ function CatalogView:resolve_character(character_id)
     for index = 1, #definition.default_talent_ids do
         talent_ids[index] = definition.default_talent_ids[index]
     end
-    return Result.ok({
+    return result_ok({
         definition_facts = {
             id = definition.id,
             definition_version = definition.definition_version,
@@ -330,13 +344,14 @@ function CatalogView:resolve_character(character_id)
         level_curve = curve_result.value,
     })
 end
+CatalogView.resolve_character = resolve_character
 
-function CatalogView:validate_owned_talents(character_id, talent_ids)
+local function validate_owned_talents(self, character_id, talent_ids)
     local state = STATES[self]
     if state == nil then
         return invalid_authority('CATALOG_AUTHORITY_REQUIRED')
     end
-    local checked_id = RuntimeId.validate_content(
+    local checked_id = validate_content_id(
         character_id,
         'char_',
         'character_id'
@@ -346,7 +361,7 @@ function CatalogView:validate_owned_talents(character_id, talent_ids)
             field = 'state.character_id',
         })
     end
-    if getmetatable(talent_ids) ~= nil or not Ordered.is_dense_array(talent_ids) then
+    if get_metatable(talent_ids) ~= nil or not is_dense_array(talent_ids) then
         return invalid_build('DENSE_ARRAY_REQUIRED', {
             field = 'state.unlocked_talent_ids',
         })
@@ -356,14 +371,14 @@ function CatalogView:validate_owned_talents(character_id, talent_ids)
     local index
     for index = 1, #talent_ids do
         local talent_id = talent_ids[index]
-        local checked_talent_id = RuntimeId.validate_content(
+        local checked_talent_id = validate_content_id(
             talent_id,
             'talent_',
-            'state.unlocked_talent_ids[' .. tostring(index) .. ']'
+            'state.unlocked_talent_ids[' .. tostring_value(index) .. ']'
         )
         if not checked_talent_id.ok then
             return invalid_build('TALENT_ID_INVALID', {
-                field = 'state.unlocked_talent_ids[' .. tostring(index) .. ']',
+                field = 'state.unlocked_talent_ids[' .. tostring_value(index) .. ']',
             })
         end
         local talent_result = state.registries.talent_definitions:get(talent_id)
@@ -391,8 +406,15 @@ function CatalogView:validate_owned_talents(character_id, talent_ids)
             talent_by_exclusive_group[talent.exclusive_group] = talent_id
         end
     end
-    return Result.ok(true)
+    return result_ok(true)
 end
+CatalogView.validate_owned_talents = validate_owned_talents
+
+-- Trusted application boundaries capture these functions at module load and
+-- pass the catalog identity explicitly. This prevents raw fields written onto
+-- the empty public proxy from shadowing the sealed authority implementation.
+Catalog.resolve_character = resolve_character
+Catalog.validate_owned_talents = validate_owned_talents
 
 function Catalog.is_authority(catalog)
     return STATES[catalog] ~= nil

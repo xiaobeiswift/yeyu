@@ -2,20 +2,25 @@ local Result = require 'wzx.domain.common.result'
 
 local Ordered = {}
 local MAX_SAFE_INTEGER = 9007199254740991
+local get_metatable = getmetatable
+local math_huge = math.huge
 local result_err = Result.err
 local result_ok = Result.ok
 local math_floor = math.floor
+local math_min = math.min
+local raw_get = rawget
 local raw_next = next
 local string_byte = string.byte
 local table_sort = table.sort
+local type_value = type
 
 -- Lua 5.1 string relational operators may follow the process collation locale.
 -- Canonical gameplay order is unsigned byte order instead.
 local function bytewise_string_less(left, right)
-    if type(left) ~= 'string' or type(right) ~= 'string' then
+    if type_value(left) ~= 'string' or type_value(right) ~= 'string' then
         return false
     end
-    local shared_length = math.min(#left, #right)
+    local shared_length = math_min(#left, #right)
     local index
     for index = 1, shared_length do
         local left_byte = string_byte(left, index)
@@ -29,7 +34,7 @@ end
 Ordered.bytewise_string_less = bytewise_string_less
 
 local function is_dense_array(value)
-    if type(value) ~= 'table' or getmetatable(value) ~= nil then
+    if type_value(value) ~= 'table' or get_metatable(value) ~= nil then
         return false
     end
 
@@ -37,10 +42,10 @@ local function is_dense_array(value)
     local maximum = 0
     local key
     for key in raw_next, value do
-        if type(key) ~= 'number'
+        if type_value(key) ~= 'number'
             or key ~= key
-            or key == math.huge
-            or key == -math.huge
+            or key == math_huge
+            or key == -math_huge
             or key < 1
             or key > MAX_SAFE_INTEGER
             or key ~= math_floor(key)
@@ -57,7 +62,7 @@ local function is_dense_array(value)
     end
     local index
     for index = 1, maximum do
-        if rawget(value, index) == nil then
+        if raw_get(value, index) == nil then
             return false
         end
     end
@@ -80,21 +85,21 @@ local function copy_array(value)
     end
     local i
     for i = 1, length do
-        copy[i] = rawget(value, i)
+        copy[i] = raw_get(value, i)
     end
     return result_ok(copy)
 end
 Ordered.copy_array = copy_array
 
 function Ordered.sorted_string_keys(value)
-    if type(value) ~= 'table' or getmetatable(value) ~= nil then
+    if type_value(value) ~= 'table' or get_metatable(value) ~= nil then
         return result_err('INVALID_ARGUMENT', 'error.foundation.map_expected', false)
     end
 
     local keys = {}
     local key
     for key in raw_next, value do
-        if type(key) ~= 'string' then
+        if type_value(key) ~= 'string' then
             return result_err('INVALID_ARGUMENT', 'error.foundation.map_key_not_string', false)
         end
         keys[#keys + 1] = key
@@ -108,7 +113,7 @@ function Ordered.sorted_copy(value, less)
     if not copied.ok then
         return copied
     end
-    if type(less) ~= 'function' then
+    if type_value(less) ~= 'function' then
         return result_err(
             'INVALID_ARGUMENT',
             'error.foundation.order_comparator_required',

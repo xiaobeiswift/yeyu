@@ -1,15 +1,19 @@
 -- Foundation V1 result type. Expected business failures are values, not exceptions.
 
 local Result = {}
+local get_metatable = getmetatable
+local raw_get = rawget
+local type_value = type
 
-function Result.ok(value)
+local function ok(value)
     return {
         ok = true,
         value = value,
     }
 end
+Result.ok = ok
 
-function Result.err(code, message_key, retryable, details)
+local function err(code, message_key, retryable, details)
     return {
         ok = false,
         error = {
@@ -20,31 +24,41 @@ function Result.err(code, message_key, retryable, details)
         },
     }
 end
+Result.err = err
 
-function Result.validate(value)
-    if type(value) ~= 'table' or type(value.ok) ~= 'boolean' then
-        return Result.err('RESULT_INVALID', 'error.foundation.result_invalid', false)
-    end
-
-    if value.ok then
-        if value.error ~= nil then
-            return Result.err('RESULT_INVALID', 'error.foundation.result_has_error_on_success', false)
-        end
-        return Result.ok(value)
-    end
-
-    local err = value.error
-    if type(err) ~= 'table'
-        or type(err.code) ~= 'string'
-        or err.code == ''
-        or type(err.message_key) ~= 'string'
-        or err.message_key == ''
-        or type(err.retryable) ~= 'boolean'
+local function validate(value)
+    if type_value(value) ~= 'table'
+        or get_metatable(value) ~= nil
+        or type_value(raw_get(value, 'ok')) ~= 'boolean'
     then
-        return Result.err('RESULT_INVALID', 'error.foundation.result_error_invalid', false)
+        return err('RESULT_INVALID', 'error.foundation.result_invalid', false)
     end
 
-    return Result.ok(value)
+    if raw_get(value, 'ok') then
+        if raw_get(value, 'error') ~= nil then
+            return err(
+                'RESULT_INVALID',
+                'error.foundation.result_has_error_on_success',
+                false
+            )
+        end
+        return ok(value)
+    end
+
+    local error_value = raw_get(value, 'error')
+    if type_value(error_value) ~= 'table'
+        or get_metatable(error_value) ~= nil
+        or type_value(raw_get(error_value, 'code')) ~= 'string'
+        or raw_get(error_value, 'code') == ''
+        or type_value(raw_get(error_value, 'message_key')) ~= 'string'
+        or raw_get(error_value, 'message_key') == ''
+        or type_value(raw_get(error_value, 'retryable')) ~= 'boolean'
+    then
+        return err('RESULT_INVALID', 'error.foundation.result_error_invalid', false)
+    end
+
+    return ok(value)
 end
+Result.validate = validate
 
 return Result

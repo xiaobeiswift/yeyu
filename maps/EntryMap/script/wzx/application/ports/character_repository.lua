@@ -1445,6 +1445,18 @@ local function validate_result_against_command(
                 'UNCHANGED_LEVEL_REQUIRES_EMPTY_REWARD_PLAN'
             )
         end
+        local reached_level_count = result.new_level - result.old_level
+        if command.reward_ref_count > reached_level_count then
+            return failure(
+                mode,
+                path .. '.new_level',
+                'REWARD_REF_COUNT_EXCEEDS_REACHED_LEVELS',
+                {
+                    reward_ref_count = command.reward_ref_count,
+                    reached_level_count = reached_level_count,
+                }
+            )
+        end
         if command.reward_ref_count == 0
             and result.reward_status ~= 'NOT_REQUIRED'
         then
@@ -1728,6 +1740,17 @@ local function validate_transition(request)
             return port_invalid_request(
                 'command.reward_ref_count',
                 'UNCHANGED_LEVEL_REQUIRES_EMPTY_REWARD_PLAN'
+            )
+        end
+        local reached_level_count = after_state.level - before_state.level
+        if command.reward_ref_count > reached_level_count then
+            return port_invalid_request(
+                'command.reward_ref_count',
+                'REWARD_REF_COUNT_EXCEEDS_REACHED_LEVELS',
+                {
+                    reward_ref_count = command.reward_ref_count,
+                    reached_level_count = reached_level_count,
+                }
             )
         end
         if result.amount ~= command.amount

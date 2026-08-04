@@ -7,6 +7,20 @@ local Progression = require 'wzx.domain.character.progression'
 local Utf8Text = require 'wzx.domain.character.utf8_text'
 
 local CharacterAggregate = {}
+local bytewise_string_less = Ordered.bytewise_string_less
+local get_metatable = getmetatable
+local is_dense_array = Ordered.is_dense_array
+local is_integer = TableShape.is_integer
+local progression_resolve_level = Progression.resolve_level
+local progression_validate_curve = Progression.validate_curve
+local result_err = Result.err
+local result_ok = Result.ok
+local sorted_string_keys = Ordered.sorted_string_keys
+local tostring_value = tostring
+local type_value = type
+local utf8_is_valid = Utf8Text.is_valid
+local validate_content_id = RuntimeId.validate_content
+local validate_derived_id = RuntimeId.validate_derived
 
 local MAX_SAFE_INTEGER = 9007199254740991
 local MAX_EXPERIENCE_GRANT = 1000000000
@@ -34,6 +48,7 @@ local DEFINITION_FACT_FIELDS = {
 local CURVE_FIELDS = {
     id = true,
     level_cap = true,
+    experience_cap = true,
     cumulative_exp_by_level = true,
     level_reward_refs = true,
 }
@@ -46,7 +61,7 @@ local ROLES = {
 local function failure(code, message_key, reason, details)
     details = details or {}
     details.reason = reason
-    return Result.err(code, message_key, false, details)
+    return result_err(code, message_key, false, details)
 end
 
 local function argument_failure(reason, details)
@@ -86,11 +101,11 @@ local function experience_failure(reason, details)
 end
 
 local function validate_known_fields(value, allowed_fields, failure_callback, field)
-    if type(value) ~= 'table' or getmetatable(value) ~= nil then
+    if type_value(value) ~= 'table' or get_metatable(value) ~= nil then
         return failure_callback('TABLE_REQUIRED', { field = field })
     end
 
-    local keys = Ordered.sorted_string_keys(value)
+    local keys = sorted_string_keys(value)
     if not keys.ok then
         return failure_callback('STRING_FIELDS_REQUIRED', { field = field })
     end
@@ -103,14 +118,14 @@ local function validate_known_fields(value, allowed_fields, failure_callback, fi
             })
         end
     end
-    return Result.ok(true)
+    return result_ok(true)
 end
 
 local function validate_talent_ids(value, failure_callback, field, optional)
     if value == nil and optional then
-        return Result.ok(true)
+        return result_ok(true)
     end
-    if getmetatable(value) ~= nil or not Ordered.is_dense_array(value) then
+    if get_metatable(value) ~= nil or not is_dense_array(value) then
         return failure_callback('DENSE_ARRAY_REQUIRED', { field = field })
     end
 
@@ -118,17 +133,17 @@ local function validate_talent_ids(value, failure_callback, field, optional)
     local index
     for index = 1, #value do
         local talent_id = value[index]
-        local checked = RuntimeId.validate_content(
+        local checked = validate_content_id(
             talent_id,
             'talent_',
-            field .. '[' .. tostring(index) .. ']'
+            field .. '[' .. tostring_value(index) .. ']'
         )
         if not checked.ok then
             return failure_callback('TALENT_ID_INVALID', {
-                field = field .. '[' .. tostring(index) .. ']',
+                field = field .. '[' .. tostring_value(index) .. ']',
             })
         end
-        if previous ~= nil and not Ordered.bytewise_string_less(previous, talent_id) then
+        if previous ~= nil and not bytewise_string_less(previous, talent_id) then
             return failure_callback('STRICT_ASCENDING_ORDER_REQUIRED', {
                 field = field,
                 index = index,
@@ -136,7 +151,7 @@ local function validate_talent_ids(value, failure_callback, field, optional)
         end
         previous = talent_id
     end
-    return Result.ok(true)
+    return result_ok(true)
 end
 
 local function validate_definition_facts(definition)
@@ -150,11 +165,11 @@ local function validate_definition_facts(definition)
         return fields
     end
 
-    local id = RuntimeId.validate_content(definition.id, 'char_', 'definition.id')
+    local id = validate_content_id(definition.id, 'char_', 'definition.id')
     if not id.ok then
         return argument_failure('DEFINITION_ID_INVALID', { field = 'definition.id' })
     end
-    if not TableShape.is_integer(definition.definition_version, 1, MAX_SAFE_INTEGER) then
+    if not is_integer(definition.definition_version, 1, MAX_SAFE_INTEGER) then
         return argument_failure('DEFINITION_VERSION_INVALID', {
             field = 'definition.definition_version',
             minimum = 1,
@@ -164,7 +179,7 @@ local function validate_definition_facts(definition)
     if not ROLES[definition.role] then
         return argument_failure('DEFINITION_ROLE_INVALID', { field = 'definition.role' })
     end
-    local curve_id = RuntimeId.validate_content(
+    local curve_id = validate_content_id(
         definition.level_curve_id,
         'curve_level_',
         'definition.level_curve_id'
@@ -174,7 +189,7 @@ local function validate_definition_facts(definition)
             field = 'definition.level_curve_id',
         })
     end
-    if type(definition.deprecated) ~= 'boolean' then
+    if type_value(definition.deprecated) ~= 'boolean' then
         return argument_failure('DEFINITION_DEPRECATED_INVALID', {
             field = 'definition.deprecated',
         })
@@ -193,11 +208,11 @@ local function validate_curve_shape(curve)
     if not fields.ok then
         return fields
     end
-    local id = RuntimeId.validate_content(curve.id, 'curve_level_', 'curve.id')
+    local id = validate_content_id(curve.id, 'curve_level_', 'curve.id')
     if not id.ok then
         return curve_failure('CURVE_ID_INVALID', { field = 'curve.id' })
     end
-    return Progression.validate_curve(curve)
+    return progression_validate_curve(curve)
 end
 
 local function copy_talent_ids(value)
@@ -237,7 +252,7 @@ local function validate_state_shape(state)
         return fields
     end
 
-    local character_id = RuntimeId.validate_content(
+    local character_id = validate_content_id(
         state.character_id,
         'char_',
         'state.character_id'
@@ -245,21 +260,21 @@ local function validate_state_shape(state)
     if not character_id.ok then
         return build_failure('CHARACTER_ID_INVALID', { field = 'state.character_id' })
     end
-    if not TableShape.is_integer(state.definition_version, 1, MAX_SAFE_INTEGER) then
+    if not is_integer(state.definition_version, 1, MAX_SAFE_INTEGER) then
         return build_failure('DEFINITION_VERSION_INVALID', {
             field = 'state.definition_version',
             minimum = 1,
             maximum = MAX_SAFE_INTEGER,
         })
     end
-    if not TableShape.is_integer(state.level, 1, 100) then
+    if not is_integer(state.level, 1, 100) then
         return build_failure('LEVEL_INVALID', {
             field = 'state.level',
             minimum = 1,
             maximum = 100,
         })
     end
-    if not TableShape.is_integer(state.experience, 0, MAX_SAFE_INTEGER) then
+    if not is_integer(state.experience, 0, MAX_SAFE_INTEGER) then
         return build_failure('EXPERIENCE_INVALID', {
             field = 'state.experience',
             minimum = 0,
@@ -284,7 +299,7 @@ local function validate_state_shape(state)
     end
 
     if state.custom_name ~= nil then
-        local valid, reason, context = Utf8Text.is_valid(
+        local valid, reason, context = utf8_is_valid(
             state.custom_name,
             MAX_CUSTOM_NAME_CODEPOINTS
         )
@@ -303,7 +318,7 @@ local function validate_state_shape(state)
         end
     end
 
-    local receipt = RuntimeId.validate_derived(
+    local receipt = validate_derived_id(
         state.created_receipt_id,
         'state.created_receipt_id'
     )
@@ -312,14 +327,14 @@ local function validate_state_shape(state)
             field = 'state.created_receipt_id',
         })
     end
-    if not TableShape.is_integer(state.revision, 0, MAX_SAFE_INTEGER) then
+    if not is_integer(state.revision, 0, MAX_SAFE_INTEGER) then
         return build_failure('REVISION_INVALID', {
             field = 'state.revision',
             minimum = 0,
             maximum = MAX_SAFE_INTEGER,
         })
     end
-    return Result.ok(true)
+    return result_ok(true)
 end
 
 local function validate_state_against_valid_curve(state, curve)
@@ -329,7 +344,7 @@ local function validate_state_against_valid_curve(state, curve)
             level_cap = curve.level_cap,
         })
     end
-    local level = Progression.resolve_level(curve, state.experience)
+    local level = progression_resolve_level(curve, state.experience)
     if not level.ok then
         return level
     end
@@ -340,7 +355,7 @@ local function validate_state_against_valid_curve(state, curve)
             expected = level.value,
         })
     end
-    return Result.ok(true)
+    return result_ok(true)
 end
 
 -- definition_facts is the exact projection returned by the sealed character
@@ -393,7 +408,7 @@ function CharacterAggregate.validate(state, definition_facts, curve)
     if not state_curve_result.ok then
         return state_curve_result
     end
-    return Result.ok(copy_state(state))
+    return result_ok(copy_state(state))
 end
 
 local validate_aggregate = CharacterAggregate.validate
@@ -416,7 +431,7 @@ function CharacterAggregate.create_owned(definition_facts, created_receipt_id)
             character_id = definition_facts.id,
         })
     end
-    local receipt = RuntimeId.validate_derived(
+    local receipt = validate_derived_id(
         created_receipt_id,
         'created_receipt_id'
     )
@@ -426,7 +441,7 @@ function CharacterAggregate.create_owned(definition_facts, created_receipt_id)
         })
     end
 
-    return Result.ok({
+    return result_ok({
         character_id = definition_facts.id,
         definition_version = definition_facts.definition_version,
         level = 1,
@@ -443,7 +458,7 @@ function CharacterAggregate.grant_experience(state, definition_facts, curve, amo
     if not validated.ok then
         return validated
     end
-    if not TableShape.is_integer(amount, 1, MAX_EXPERIENCE_GRANT) then
+    if not is_integer(amount, 1, MAX_EXPERIENCE_GRANT) then
         return experience_failure('AMOUNT_OUT_OF_RANGE', {
             field = 'amount',
             minimum = 1,
@@ -451,10 +466,25 @@ function CharacterAggregate.grant_experience(state, definition_facts, curve, amo
         })
     end
     local current = validated.value
+    if current.definition_version ~= definition_facts.definition_version then
+        return build_failure('DEFINITION_VERSION_MIGRATION_REQUIRED', {
+            field = 'state.definition_version',
+            state_definition_version = current.definition_version,
+            available_definition_version = definition_facts.definition_version,
+        })
+    end
     if current.experience > MAX_SAFE_INTEGER - amount then
         return experience_failure('SAFE_INTEGER_OVERFLOW', {
             field = 'experience',
             maximum = MAX_SAFE_INTEGER,
+        })
+    end
+    if amount > curve.experience_cap - current.experience then
+        return experience_failure('EXPERIENCE_CAP_EXCEEDED', {
+            field = 'experience',
+            current_experience = current.experience,
+            amount = amount,
+            experience_cap = curve.experience_cap,
         })
     end
     if current.revision == MAX_SAFE_INTEGER then
@@ -466,13 +496,13 @@ function CharacterAggregate.grant_experience(state, definition_facts, curve, amo
 
     local updated = copy_state(current)
     updated.experience = current.experience + amount
-    local resolved_level = Progression.resolve_level(curve, updated.experience)
+    local resolved_level = progression_resolve_level(curve, updated.experience)
     if not resolved_level.ok then
         return resolved_level
     end
     updated.level = resolved_level.value
     updated.revision = current.revision + 1
-    return Result.ok(updated)
+    return result_ok(updated)
 end
 
 CharacterAggregate.MAX_CUSTOM_NAME_CODEPOINTS = MAX_CUSTOM_NAME_CODEPOINTS

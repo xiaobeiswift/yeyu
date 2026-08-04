@@ -1,8 +1,12 @@
 local Harness = require 'wzx.tests.harness'
 local CharacterRules = require 'wzx.application.character.character_rules'
 local Catalog = require 'wzx.config.schema.character.catalog'
+local ConfigValidation = require 'wzx.config.schema.character.validation'
+local ContractValidation = require 'wzx.domain.contracts.validation'
 local CharacterAggregate = require 'wzx.domain.character.character_aggregate'
+local LevelRewardPlanDigest = require 'wzx.domain.character.level_reward_plan_digest'
 local Progression = require 'wzx.domain.character.progression'
+local Result = require 'wzx.domain.common.result'
 
 local case = Harness.case
 local assert = Harness.assert
@@ -61,7 +65,17 @@ local function level_curve(id)
             250,
             500,
         },
-        level_reward_refs = {},
+        experience_cap = 1000,
+        level_reward_refs = {
+            {
+                reached_level = 2,
+                reward_ref = 'reward_level_two',
+            },
+            {
+                reached_level = 4,
+                reward_ref = 'reward_level_four',
+            },
+        },
     }
 end
 
@@ -241,6 +255,7 @@ return {
 
         source.character_definitions[1].base_primary.strength = 999
         source.level_curves[1].cumulative_exp_by_level[2] = 999
+        source.level_curves[1].level_reward_refs[1].reward_ref = 'reward_changed'
         source.talent_definitions[1].contributions[1].value = 999
         assert.equal(
             catalog:get('character_definitions', 'char_hero').value.base_primary.strength,
@@ -252,6 +267,11 @@ return {
             100
         )
         assert.equal(
+            catalog:get('level_curves', 'curve_level_story')
+                .value.level_reward_refs[1].reward_ref,
+            'reward_level_two'
+        )
+        assert.equal(
             catalog:get('talent_definitions', 'talent_alpha')
                 .value.contributions[1].value,
             5
@@ -259,6 +279,8 @@ return {
 
         local fetched = catalog:get('character_definitions', 'char_hero').value
         fetched.base_primary.strength = 777
+        local fetched_curve = catalog:get('level_curves', 'curve_level_story').value
+        fetched_curve.level_reward_refs[1].reward_ref = 'reward_fetched_changed'
         local listed = catalog:list('character_definitions')
         assert.equal(listed.ok, true)
         assert.equal(listed.value[1].id, 'char_alpha')
@@ -267,6 +289,14 @@ return {
         assert.equal(
             catalog:get('character_definitions', 'char_hero').value.base_primary.strength,
             10
+        )
+        local listed_curves = catalog:list('level_curves')
+        assert.equal(listed_curves.ok, true)
+        listed_curves.value[1].level_reward_refs[1].reward_ref = 'reward_list_changed'
+        assert.equal(
+            catalog:get('level_curves', 'curve_level_story')
+                .value.level_reward_refs[1].reward_ref,
+            'reward_level_two'
         )
 
         assert.throws(function()
@@ -305,6 +335,232 @@ return {
         local duplicate = catalog_source()
         duplicate.character_definitions[2] = character_definition()
         assert.error_code(Catalog.build(duplicate), 'REGISTRY_DUPLICATE')
+    end),
+
+    case('character catalog validators retain captured schema authorities', function()
+        local originals = {
+            boolean = ConfigValidation.boolean,
+            bytewise_string_less = ConfigValidation.bytewise_string_less,
+            content_id = ConfigValidation.content_id,
+            dense_array = ConfigValidation.dense_array,
+            enum = ConfigValidation.enum,
+            error_summary = ConfigValidation.error_summary,
+            exact_integer_map = ConfigValidation.exact_integer_map,
+            first = ConfigValidation.first,
+            integer = ConfigValidation.integer,
+            invalid = ConfigValidation.invalid,
+            no_unknown_fields = ConfigValidation.no_unknown_fields,
+            non_empty_string = ConfigValidation.non_empty_string,
+            sorted_unique_content_ids =
+                ConfigValidation.sorted_unique_content_ids,
+            sorted_unique_strings = ConfigValidation.sorted_unique_strings,
+        }
+        ConfigValidation.boolean = function()
+            return nil
+        end
+        ConfigValidation.bytewise_string_less = function()
+            return true
+        end
+        ConfigValidation.content_id = function()
+            return nil
+        end
+        ConfigValidation.dense_array = function()
+            return nil
+        end
+        ConfigValidation.enum = function()
+            return nil
+        end
+        ConfigValidation.error_summary = function()
+            return {}
+        end
+        ConfigValidation.exact_integer_map = function()
+            return nil
+        end
+        ConfigValidation.first = function()
+            return nil
+        end
+        ConfigValidation.integer = function()
+            return nil
+        end
+        ConfigValidation.invalid = function()
+            return nil
+        end
+        ConfigValidation.no_unknown_fields = function()
+            return nil
+        end
+        ConfigValidation.non_empty_string = function()
+            return nil
+        end
+        ConfigValidation.sorted_unique_content_ids = function()
+            return nil
+        end
+        ConfigValidation.sorted_unique_strings = function()
+            return nil
+        end
+        local original_contract_enum = ContractValidation.enum
+        ContractValidation.enum = function()
+            return nil
+        end
+
+        local invalid_id_source = catalog_source()
+        invalid_id_source.level_curves[1].id = 'evil'
+        local invalid_id = Catalog.build(invalid_id_source)
+        local invalid_reward_source = catalog_source()
+        invalid_reward_source.level_curves[1]
+            .level_reward_refs[1].reward_ref = 'evil'
+        local invalid_reward = Catalog.build(invalid_reward_source)
+        local invalid_character_source = catalog_source()
+        invalid_character_source.character_definitions[1].role = 'FORGED_ROLE'
+        local invalid_character = Catalog.build(invalid_character_source)
+        local invalid_formula_source = catalog_source()
+        invalid_formula_source.formula_sets[1].formula_version = 'evil'
+        local invalid_formula = Catalog.build(invalid_formula_source)
+        local invalid_talent_source = catalog_source()
+        invalid_talent_source.talent_definitions[1].schema_version = 'evil'
+        local invalid_talent = Catalog.build(invalid_talent_source)
+        local invalid_contribution_source = catalog_source()
+        invalid_contribution_source.talent_definitions[1]
+            .contributions[1].operation = 'FORGED_OPERATION'
+        local invalid_contribution = Catalog.build(invalid_contribution_source)
+
+        local key
+        local original
+        for key, original in pairs(originals) do
+            ConfigValidation[key] = original
+        end
+        ContractValidation.enum = original_contract_enum
+        assert.error_reason(invalid_id, 'CONTENT_ID_INVALID')
+        assert.error_reason(invalid_reward, 'CONTENT_ID_INVALID')
+        assert.error_reason(invalid_character, 'ENUM_VALUE_INVALID')
+        assert.error_reason(invalid_formula, 'INTEGER_OUT_OF_RANGE')
+        assert.error_reason(invalid_talent, 'INTEGER_OUT_OF_RANGE')
+        assert.error_reason(invalid_contribution, 'STAT_CONTRIBUTION_INVALID')
+    end),
+
+    case('catalog projections retain captured registry result authority', function()
+        local rules = bind_rules()
+        local state = aggregate_state()
+        state.level = 1
+        state.experience = 0
+        local original_ok = Result.ok
+        local original_err = Result.err
+        local monkeypatch_calls = 0
+        Result.ok = function(value)
+            monkeypatch_calls = monkeypatch_calls + 1
+            if type(value) == 'table'
+                and type(value.level_reward_refs) == 'table'
+                and type(value.level_reward_refs[1]) == 'table'
+            then
+                value.level_reward_refs[1].reward_ref = 'reward_forged'
+            end
+            return original_ok(value)
+        end
+        Result.err = function(...)
+            monkeypatch_calls = monkeypatch_calls + 1
+            return original_err(...)
+        end
+        local call_ok, built, invalid_built, planned = pcall(function()
+            local valid_catalog = Catalog.build(catalog_source())
+            local invalid_source = catalog_source()
+            invalid_source.character_definitions[1].role = 'FORGED_ROLE'
+            local rejected_catalog = Catalog.build(invalid_source)
+            return valid_catalog,
+                rejected_catalog,
+                rules:plan_experience_grant(state, 100)
+        end)
+        Result.ok = original_ok
+        Result.err = original_err
+
+        assert.equal(call_ok, true)
+        assert.equal(built.ok, true)
+        assert.error_reason(invalid_built, 'ENUM_VALUE_INVALID')
+        assert.equal(planned.ok, true)
+        assert.equal(monkeypatch_calls, 0)
+        assert.equal(
+            planned.value.reached_level_rewards[1].reward_ref,
+            'reward_level_two'
+        )
+    end),
+
+    case('catalog authority creation retains captured builtin protections', function()
+        local source = catalog_source()
+        local original_setmetatable = _G.setmetatable
+        local original_type = _G.type
+        local original_error = _G.error
+        local protected_call = pcall
+        local monkeypatch_calls = 0
+        local function forbidden_patch()
+            monkeypatch_calls = monkeypatch_calls + 1
+            original_error('captured catalog builtin authority was bypassed')
+        end
+
+        _G.setmetatable = forbidden_patch
+        _G.type = forbidden_patch
+        _G.error = forbidden_patch
+        local call_ok, built, resolved, listed, write_ok = protected_call(function()
+            local catalog = Catalog.build(source)
+            local get_result = catalog.value:get('character_definitions', 'char_hero')
+            local list_result = catalog.value:list('character_definitions')
+            local mutation_ok = protected_call(function()
+                catalog.value.shadow = true
+            end)
+            return catalog, get_result, list_result, mutation_ok
+        end)
+        _G.setmetatable = original_setmetatable
+        _G.type = original_type
+        _G.error = original_error
+
+        assert.equal(call_ok, true)
+        assert.equal(built.ok, true)
+        assert.equal(Catalog.is_authority(built.value), true)
+        assert.equal(resolved.value.id, 'char_hero')
+        assert.equal(listed.value[1].id, 'char_hero')
+        assert.equal(write_ok, false)
+        assert.equal(monkeypatch_calls, 0)
+    end),
+
+    case('character rules binding retains captured builtin protections', function()
+        local catalog = Catalog.build(catalog_source())
+        assert.equal(catalog.ok, true)
+        local forged = {
+            plan_experience_grant = function()
+                return {
+                    ok = true,
+                    value = {
+                        reward_ref_count = 64,
+                        reward_plan_digest = string.rep('f', 64),
+                    },
+                }
+            end,
+        }
+        local original_setmetatable = _G.setmetatable
+        local original_error = _G.error
+        local protected_call = pcall
+        local monkeypatch_calls = 0
+
+        _G.setmetatable = function()
+            monkeypatch_calls = monkeypatch_calls + 1
+            return forged
+        end
+        _G.error = function()
+            monkeypatch_calls = monkeypatch_calls + 1
+        end
+        local call_ok, bound, planned, write_ok = protected_call(function()
+            local rules = CharacterRules.bind(catalog.value)
+            local invalid_plan = rules.value:plan_experience_grant({}, -1)
+            local mutation_ok = protected_call(function()
+                rules.value.shadow = true
+            end)
+            return rules, invalid_plan, mutation_ok
+        end)
+        _G.setmetatable = original_setmetatable
+        _G.error = original_error
+
+        assert.equal(call_ok, true)
+        assert.equal(bound.ok, true)
+        assert.equal(planned.ok, false)
+        assert.equal(write_ok, false)
+        assert.equal(monkeypatch_calls, 0)
     end),
 
     case('character catalog rejects every internal character reference break', function()
@@ -491,6 +747,40 @@ return {
         end, 'character catalog is read-only')
         assert.equal(rules:create_owned('char_hero', 'creation5').ok, true)
 
+        rawset(catalog, 'resolve_character', function()
+            return {
+                ok = true,
+                value = {
+                    definition_facts = {
+                        id = 'char_hero',
+                        definition_version = 999,
+                        role = 'PLAYABLE',
+                        level_curve_id = 'curve_level_story',
+                        default_talent_ids = {},
+                        deprecated = false,
+                    },
+                    level_curve = level_curve(),
+                },
+            }
+        end)
+        rawset(catalog, 'validate_owned_talents', function()
+            return { ok = true, value = true }
+        end)
+        local rebound = CharacterRules.bind(catalog)
+        local shadowed_create = rebound.value:create_owned(
+            'char_hero',
+            'creation_raw_shadow'
+        )
+        local shadowed_state = aggregate_state()
+        shadowed_state.unlocked_talent_ids = { 'talent_missing' }
+        local shadowed_validate = rebound.value:validate(shadowed_state)
+        rawset(catalog, 'resolve_character', nil)
+        rawset(catalog, 'validate_owned_talents', nil)
+        assert.equal(rebound.ok, true)
+        assert.equal(shadowed_create.ok, true)
+        assert.equal(shadowed_create.value.definition_version, 3)
+        assert.error_reason(shadowed_validate, 'TALENT_REFERENCE_NOT_FOUND')
+
         local original_create_owned = CharacterAggregate.create_owned
         CharacterAggregate.create_owned = function()
             return { ok = true, value = { forged = true } }
@@ -548,7 +838,7 @@ return {
 
         local capped = aggregate_state()
         capped.level = 4
-        capped.experience = Progression.MAX_SAFE_INTEGER
+        capped.experience = curve.experience_cap
         assert.equal(CharacterAggregate.validate(capped, definition, curve).ok, true)
     end),
 
@@ -714,7 +1004,7 @@ return {
         )
     end),
 
-    case('experience grants cross levels once, retain capped xp, and isolate state aliases', function()
+    case('experience grants cross levels once, retain max-level xp, and isolate state aliases', function()
         local rules, catalog = bind_rules()
         local state = aggregate_state()
         state.level = 1
@@ -747,11 +1037,131 @@ return {
         local capped = aggregate_state()
         capped.level = 4
         capped.experience = 500
+        local capped_before = deep_copy(capped)
         local capped_result = rules:grant_experience(capped, 10)
         assert.equal(capped_result.ok, true)
         assert.equal(capped_result.value.level, 4)
         assert.equal(capped_result.value.experience, 510)
         assert.equal(capped_result.value.revision, 8)
+        assert.deep_equal(capped, capped_before)
+    end),
+
+    case('experience writes require the current definition version before planning rewards', function()
+        local rules = bind_rules()
+        local legacy = aggregate_state()
+        legacy.definition_version = 2
+        local before = deep_copy(legacy)
+
+        assert.equal(rules:validate(legacy).ok, true)
+        local granted = rules:grant_experience(legacy, 100)
+        local planned = rules:plan_experience_grant(legacy, 100)
+        assert.error_code(granted, 'CHARACTER_BUILD_INVALID')
+        assert.error_reason(granted, 'DEFINITION_VERSION_MIGRATION_REQUIRED')
+        assert.equal(granted.error.details.state_definition_version, 2)
+        assert.equal(granted.error.details.available_definition_version, 3)
+        assert.error_code(planned, 'CHARACTER_BUILD_INVALID')
+        assert.error_reason(planned, 'DEFINITION_VERSION_MIGRATION_REQUIRED')
+        assert.deep_equal(legacy, before)
+    end),
+
+    case('experience plans select sparse crossed-level rewards and isolate every output', function()
+        local rules = bind_rules()
+        local state = aggregate_state()
+        state.level = 1
+        state.experience = 0
+        state.revision = 2
+        local before = deep_copy(state)
+
+        local planned = rules:plan_experience_grant(state, 500)
+        assert.equal(planned.ok, true)
+        assert.equal(planned.value.character_id, 'char_hero')
+        assert.equal(planned.value.definition_version, 3)
+        assert.equal(planned.value.curve_id, 'curve_level_story')
+        assert.equal(planned.value.expected_revision, 2)
+        assert.equal(planned.value.old_level, 1)
+        assert.equal(planned.value.new_level, 4)
+        assert.deep_equal(planned.value.before_state, before)
+        assert.equal(planned.value.after_state.level, 4)
+        assert.equal(planned.value.after_state.experience, 500)
+        assert.equal(planned.value.after_state.revision, 3)
+        assert.deep_equal(planned.value.reached_level_rewards, {
+            {
+                reached_level = 2,
+                reward_ref = 'reward_level_two',
+            },
+            {
+                reached_level = 4,
+                reward_ref = 'reward_level_four',
+            },
+        })
+        assert.deep_equal(planned.value.reward_refs, {
+            'reward_level_two',
+            'reward_level_four',
+        })
+        assert.equal(planned.value.reward_ref_count, 2)
+        assert.equal(type(planned.value.reward_plan_digest), 'string')
+        assert.equal(#planned.value.reward_plan_digest, 64)
+        assert.equal(
+            planned.value.reward_plan_digest == LevelRewardPlanDigest.ZERO_DIGEST,
+            false
+        )
+        assert.deep_equal(state, before)
+
+        planned.value.before_state.unlocked_talent_ids[1] = 'talent_before_changed'
+        assert.equal(planned.value.after_state.unlocked_talent_ids[1], 'talent_alpha')
+        planned.value.after_state.unlocked_talent_ids[1] = 'talent_after_changed'
+        planned.value.after_state.experience = 999
+        planned.value.reached_level_rewards[1].reward_ref = 'reward_row_changed'
+        planned.value.reward_refs[1] = 'reward_ref_changed'
+        assert.deep_equal(state, before)
+
+        local repeated = rules:plan_experience_grant(state, 500)
+        assert.equal(repeated.ok, true)
+        assert.equal(repeated.value.before_state.unlocked_talent_ids[1], 'talent_alpha')
+        assert.equal(repeated.value.after_state.unlocked_talent_ids[1], 'talent_alpha')
+        assert.equal(repeated.value.after_state.experience, 500)
+        assert.equal(
+            repeated.value.reached_level_rewards[1].reward_ref,
+            'reward_level_two'
+        )
+        assert.equal(repeated.value.reward_refs[1], 'reward_level_two')
+        assert.equal(
+            repeated.value.reward_plan_digest,
+            planned.value.reward_plan_digest
+        )
+    end),
+
+    case('experience cap accepts the exact boundary and rejects the whole overflowing grant', function()
+        local rules = bind_rules()
+        local boundary = aggregate_state()
+        boundary.level = 4
+        boundary.experience = 999
+        local boundary_before = deep_copy(boundary)
+
+        local exact = rules:grant_experience(boundary, 1)
+        assert.equal(exact.ok, true)
+        assert.equal(exact.value.level, 4)
+        assert.equal(exact.value.experience, 1000)
+        assert.equal(exact.value.revision, 8)
+        assert.deep_equal(boundary, boundary_before)
+
+        local at_cap_before = deep_copy(exact.value)
+        local at_cap = rules:grant_experience(exact.value, 1)
+        assert.error_code(at_cap, 'CHARACTER_XP_OUT_OF_RANGE')
+        assert.error_reason(at_cap, 'EXPERIENCE_CAP_EXCEEDED')
+        assert.equal(at_cap.error.details.current_experience, 1000)
+        assert.equal(at_cap.error.details.amount, 1)
+        assert.equal(at_cap.error.details.experience_cap, 1000)
+        assert.deep_equal(exact.value, at_cap_before)
+
+        local crossing = aggregate_state()
+        crossing.level = 4
+        crossing.experience = 999
+        local crossing_before = deep_copy(crossing)
+        local rejected = rules:grant_experience(crossing, 2)
+        assert.error_code(rejected, 'CHARACTER_XP_OUT_OF_RANGE')
+        assert.error_reason(rejected, 'EXPERIENCE_CAP_EXCEEDED')
+        assert.deep_equal(crossing, crossing_before)
     end),
 
     case('experience grant failures preserve state and reject amount and integer overflows', function()
@@ -778,6 +1188,7 @@ return {
             id = 'curve_level_story',
             level_cap = 2,
             cumulative_exp_by_level = { 0, 1 },
+            experience_cap = Progression.MAX_SAFE_INTEGER,
             level_reward_refs = {},
         }
         local short_source = catalog_source()
@@ -820,8 +1231,10 @@ return {
         assert.error_reason(wrong_curve_result, 'DEFINITION_CURVE_MISMATCH')
     end),
 
-    case('experience grants retain their captured aggregate validation authority', function()
+    case('experience grants retain captured aggregate and progression authorities', function()
         local original_validate = CharacterAggregate.validate
+        local original_validate_curve = Progression.validate_curve
+        local original_resolve_level = Progression.resolve_level
         local monkeypatch_calls = 0
         local completed, failure = pcall(function()
             CharacterAggregate.validate = function()
@@ -830,6 +1243,14 @@ return {
                     ok = true,
                     value = aggregate_state(),
                 }
+            end
+            Progression.validate_curve = function()
+                monkeypatch_calls = monkeypatch_calls + 1
+                return { ok = true, value = true }
+            end
+            Progression.resolve_level = function()
+                monkeypatch_calls = monkeypatch_calls + 1
+                return { ok = true, value = 99 }
             end
 
             local mismatched = aggregate_state()
@@ -846,10 +1267,67 @@ return {
         end)
 
         CharacterAggregate.validate = original_validate
+        Progression.validate_curve = original_validate_curve
+        Progression.resolve_level = original_resolve_level
         if not completed then
             error(failure, 0)
         end
         assert.equal(CharacterAggregate.validate, original_validate)
+        assert.equal(Progression.validate_curve, original_validate_curve)
+        assert.equal(Progression.resolve_level, original_resolve_level)
+    end),
+
+    case('character rules plans retain captured aggregate reward and digest authorities', function()
+        local rules = bind_rules()
+        local original_grant = CharacterAggregate.grant_experience
+        local original_collect_rewards = Progression.collect_level_rewards
+        local original_derive = LevelRewardPlanDigest.derive
+        local monkeypatch_calls = 0
+        local completed, failure = pcall(function()
+            CharacterAggregate.grant_experience = function()
+                monkeypatch_calls = monkeypatch_calls + 1
+                return { ok = true, value = { forged = true } }
+            end
+            Progression.collect_level_rewards = function()
+                monkeypatch_calls = monkeypatch_calls + 1
+                return { ok = true, value = {} }
+            end
+            LevelRewardPlanDigest.derive = function()
+                monkeypatch_calls = monkeypatch_calls + 1
+                return {
+                    ok = true,
+                    value = {
+                        count = 0,
+                        digest = LevelRewardPlanDigest.ZERO_DIGEST,
+                    },
+                }
+            end
+
+            local state = aggregate_state()
+            state.level = 1
+            state.experience = 0
+            local planned = rules:plan_experience_grant(state, 500)
+            assert.equal(planned.ok, true)
+            assert.equal(planned.value.new_level, 4)
+            assert.equal(planned.value.reward_ref_count, 2)
+            assert.equal(
+                planned.value.reward_plan_digest
+                    == LevelRewardPlanDigest.ZERO_DIGEST,
+                false
+            )
+
+            assert.equal(monkeypatch_calls, 0)
+        end)
+
+        CharacterAggregate.grant_experience = original_grant
+        Progression.collect_level_rewards = original_collect_rewards
+        LevelRewardPlanDigest.derive = original_derive
+        if not completed then
+            error(failure, 0)
+        end
+        assert.equal(CharacterAggregate.grant_experience, original_grant)
+        assert.equal(Progression.collect_level_rewards, original_collect_rewards)
+        assert.equal(LevelRewardPlanDigest.derive, original_derive)
     end),
 
     case('aggregate boundaries reject hostile metatables and return defensive states', function()

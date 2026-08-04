@@ -4,6 +4,7 @@ local CharacterDefinition = require 'wzx.config.schema.character.character_defin
 local LevelCurve = require 'wzx.config.schema.character.level_curve'
 local TalentDefinition = require 'wzx.config.schema.character.talent_definition'
 local Ordered = require 'wzx.domain.common.ordered'
+local LevelRewardPlanDigest = require 'wzx.domain.character.level_reward_plan_digest'
 local Progression = require 'wzx.domain.character.progression'
 local StatPipeline = require 'wzx.domain.character.stat_pipeline'
 
@@ -74,6 +75,7 @@ local function level_curve()
     return {
         id = 'curve_level_story',
         level_cap = 4,
+        experience_cap = 1000,
         cumulative_exp_by_level = {
             0,
             100,
@@ -81,8 +83,35 @@ local function level_curve()
             500,
         },
         level_reward_refs = {
-            'reward_level_two',
-            'reward_level_three',
+            {
+                reached_level = 2,
+                reward_ref = 'reward_level_two',
+            },
+            {
+                reached_level = 3,
+                reward_ref = 'reward_level_three',
+            },
+        },
+    }
+end
+
+local function level_reward_plan()
+    return {
+        character_id = 'char_hero',
+        definition_version = 7,
+        curve_id = 'curve_level_story',
+        expected_revision = 11,
+        old_level = 1,
+        new_level = 3,
+        rewards = {
+            {
+                reached_level = 2,
+                reward_ref = 'reward_level_two',
+            },
+            {
+                reached_level = 3,
+                reward_ref = 'reward_level_three',
+            },
         },
     }
 end
@@ -254,7 +283,21 @@ return {
         local curve_result = LevelCurve.validate(curve_source)
         assert.equal(curve_result.ok, true)
         curve_source.cumulative_exp_by_level[2] = 999
+        curve_source.level_reward_refs[1].reached_level = 4
+        curve_source.level_reward_refs[1].reward_ref = 'reward_changed'
         assert.equal(curve_result.value.cumulative_exp_by_level[2], 100)
+        assert.deep_equal(curve_result.value.level_reward_refs[1], {
+            reached_level = 2,
+            reward_ref = 'reward_level_two',
+        })
+
+        local curve_without_rewards = level_curve()
+        curve_without_rewards.level_reward_refs = nil
+        local curve_without_rewards_result = LevelCurve.validate(
+            curve_without_rewards
+        )
+        assert.equal(curve_without_rewards_result.ok, true)
+        assert.deep_equal(curve_without_rewards_result.value.level_reward_refs, {})
 
         local formula_source = formula_set()
         local formula_result = AttributeFormulaSet.validate(formula_source)
@@ -339,11 +382,14 @@ return {
     case('level curve schema enforces cap, zero origin, length, order, and safe bounds', function()
         local single_level = level_curve()
         single_level.level_cap = 1
+        single_level.experience_cap = 0
         single_level.cumulative_exp_by_level = { 0 }
+        single_level.level_reward_refs = {}
         assert.equal(LevelCurve.validate(single_level).ok, true)
 
         local safe_maximum = level_curve()
         safe_maximum.level_cap = 3
+        safe_maximum.experience_cap = Progression.MAX_SAFE_INTEGER
         safe_maximum.cumulative_exp_by_level = {
             0,
             1,
@@ -376,6 +422,158 @@ return {
         local range_invalid = level_curve()
         range_invalid.cumulative_exp_by_level[4] = Progression.MAX_SAFE_INTEGER + 1
         assert.error_reason(LevelCurve.validate(range_invalid), 'INTEGER_OUT_OF_RANGE')
+
+        local missing_experience_cap = level_curve()
+        missing_experience_cap.experience_cap = nil
+        assert.error_reason(
+            LevelCurve.validate(missing_experience_cap),
+            'INTEGER_OUT_OF_RANGE'
+        )
+
+        local experience_cap_below_last_threshold = level_curve()
+        experience_cap_below_last_threshold.experience_cap = 499
+        assert.error_reason(
+            LevelCurve.validate(experience_cap_below_last_threshold),
+            'INTEGER_OUT_OF_RANGE'
+        )
+
+        local experience_cap_above_safe_integer = level_curve()
+        experience_cap_above_safe_integer.experience_cap =
+            Progression.MAX_SAFE_INTEGER + 1
+        assert.error_reason(
+            LevelCurve.validate(experience_cap_above_safe_integer),
+            'INTEGER_OUT_OF_RANGE'
+        )
+    end),
+
+    case('level curve schema enforces structured canonical reward mappings', function()
+        assert.equal(LevelCurve.MAX_LEVEL_REWARD_REFS, 64)
+
+        local legacy_strings = level_curve()
+        legacy_strings.level_reward_refs = { 'reward_level_two' }
+        assert.error_reason(LevelCurve.validate(legacy_strings), 'TABLE_REQUIRED')
+
+        local sparse = level_curve()
+        sparse.level_reward_refs = {
+            [1] = {
+                reached_level = 2,
+                reward_ref = 'reward_level_two',
+            },
+            [3] = {
+                reached_level = 3,
+                reward_ref = 'reward_level_three',
+            },
+        }
+        assert.error_reason(LevelCurve.validate(sparse), 'DENSE_ARRAY_REQUIRED')
+
+        local missing_level = level_curve()
+        missing_level.level_reward_refs[1].reached_level = nil
+        assert.error_reason(LevelCurve.validate(missing_level), 'INTEGER_OUT_OF_RANGE')
+
+        local missing_reward = level_curve()
+        missing_reward.level_reward_refs[1].reward_ref = nil
+        assert.error_reason(LevelCurve.validate(missing_reward), 'CONTENT_ID_INVALID')
+
+        local unknown_field = level_curve()
+        unknown_field.level_reward_refs[1].unexpected = true
+        local unknown_result = LevelCurve.validate(unknown_field)
+        assert.error_reason(unknown_result, 'UNKNOWN_FIELD')
+        assert.equal(
+            unknown_result.error.details.field,
+            'level_reward_refs[1].unexpected'
+        )
+
+        local non_string_field = level_curve()
+        non_string_field.level_reward_refs[1][1] = true
+        local non_string_result = LevelCurve.validate(non_string_field)
+        assert.error_reason(non_string_result, 'STRING_FIELD_KEYS_REQUIRED')
+        assert.equal(
+            non_string_result.error.details.field,
+            'level_reward_refs[1]'
+        )
+
+        local invalid_reward_id = level_curve()
+        invalid_reward_id.level_reward_refs[1].reward_ref = 'item_level_two'
+        assert.error_reason(
+            LevelCurve.validate(invalid_reward_id),
+            'CONTENT_ID_INVALID'
+        )
+
+        local below_level_range = level_curve()
+        below_level_range.level_reward_refs[1].reached_level = 1
+        assert.error_reason(
+            LevelCurve.validate(below_level_range),
+            'INTEGER_OUT_OF_RANGE'
+        )
+
+        local above_level_range = level_curve()
+        above_level_range.level_reward_refs[2].reached_level = 5
+        assert.error_reason(
+            LevelCurve.validate(above_level_range),
+            'INTEGER_OUT_OF_RANGE'
+        )
+
+        local duplicate_level = level_curve()
+        duplicate_level.level_reward_refs[2].reached_level = 2
+        assert.error_reason(
+            LevelCurve.validate(duplicate_level),
+            'STRICT_ASCENDING_REACHED_LEVEL_REQUIRED'
+        )
+
+        local reversed_levels = level_curve()
+        reversed_levels.level_reward_refs[1].reached_level = 3
+        reversed_levels.level_reward_refs[2].reached_level = 2
+        assert.error_reason(
+            LevelCurve.validate(reversed_levels),
+            'STRICT_ASCENDING_REACHED_LEVEL_REQUIRED'
+        )
+
+        local hostile_metatable = {
+            __index = function()
+                error('hostile reward __index must not be invoked')
+            end,
+            __len = function()
+                error('hostile reward __len must not be invoked')
+            end,
+            __metatable = 'locked-hostile-reward-metatable',
+        }
+        local hostile_rows = level_curve()
+        setmetatable(hostile_rows.level_reward_refs, hostile_metatable)
+        assert.error_reason(
+            LevelCurve.validate(hostile_rows),
+            'DENSE_ARRAY_REQUIRED'
+        )
+
+        local hostile_row = level_curve()
+        setmetatable(hostile_row.level_reward_refs[1], hostile_metatable)
+        assert.error_reason(LevelCurve.validate(hostile_row), 'TABLE_REQUIRED')
+
+        local maximum = level_curve()
+        maximum.level_cap = 100
+        maximum.experience_cap = 99
+        maximum.cumulative_exp_by_level = {}
+        maximum.level_reward_refs = {}
+        local index
+        for index = 1, 100 do
+            maximum.cumulative_exp_by_level[index] = index - 1
+        end
+        for index = 1, LevelCurve.MAX_LEVEL_REWARD_REFS do
+            maximum.level_reward_refs[index] = {
+                reached_level = index + 1,
+                reward_ref = 'reward_level_' .. tostring(index + 1),
+            }
+        end
+        assert.equal(LevelCurve.validate(maximum).ok, true)
+
+        local over_limit = deep_copy(maximum)
+        over_limit.level_reward_refs[65] = {
+            reached_level = 66,
+            reward_ref = 'reward_level_66',
+        }
+        assert.error_reason(
+            LevelCurve.validate(over_limit),
+            'REWARD_REF_COUNT_LIMIT_EXCEEDED'
+        )
     end),
 
     case('talent schema validates canonical contributions, uniqueness, and stable order', function()
@@ -435,6 +633,7 @@ return {
     case('progression resolves every threshold edge and rejects unsafe experience', function()
         local curve = {
             level_cap = 4,
+            experience_cap = Progression.MAX_SAFE_INTEGER,
             cumulative_exp_by_level = {
                 0,
                 100,
@@ -468,6 +667,382 @@ return {
             local result = Progression.resolve_level(curve, invalid_values[index])
             assert.error_code(result, 'CHARACTER_XP_OUT_OF_RANGE')
         end
+
+        local bounded_curve = level_curve()
+        assert.error_code(
+            Progression.resolve_level(bounded_curve, 1001),
+            'CHARACTER_XP_OUT_OF_RANGE'
+        )
+    end),
+
+    case('progression selects reward rows for the canonical crossed-level interval', function()
+        local curve = level_curve()
+        local before = deep_copy(curve)
+        local rewards = Progression.collect_level_rewards(curve, 1, 3)
+        assert.equal(rewards.ok, true)
+        assert.deep_equal(rewards.value, {
+            {
+                reached_level = 2,
+                reward_ref = 'reward_level_two',
+            },
+            {
+                reached_level = 3,
+                reward_ref = 'reward_level_three',
+            },
+        })
+        assert.deep_equal(curve, before)
+
+        rewards.value[1].reached_level = 99
+        rewards.value[1].reward_ref = 'reward_changed'
+        assert.deep_equal(curve, before)
+        local collected_again = Progression.collect_level_rewards(curve, 1, 3)
+        assert.deep_equal(collected_again.value, {
+            {
+                reached_level = 2,
+                reward_ref = 'reward_level_two',
+            },
+            {
+                reached_level = 3,
+                reward_ref = 'reward_level_three',
+            },
+        })
+
+        local refs = Progression.collect_level_reward_refs(curve, 1, 3)
+        assert.equal(refs.ok, true)
+        assert.deep_equal(refs.value, {
+            'reward_level_two',
+            'reward_level_three',
+        })
+
+        assert.deep_equal(
+            Progression.collect_level_rewards(curve, 3, 4).value,
+            {}
+        )
+        assert.deep_equal(
+            Progression.collect_level_rewards(curve, 4, 4).value,
+            {}
+        )
+
+        local no_rewards = level_curve()
+        no_rewards.level_reward_refs = nil
+        assert.deep_equal(
+            Progression.collect_level_rewards(no_rewards, 1, 4).value,
+            {}
+        )
+    end),
+
+    case('progression reward collection rejects invalid curves and transitions', function()
+        local curve = level_curve()
+        local reversed = Progression.collect_level_rewards(curve, 3, 2)
+        assert.error_code(reversed, 'CHARACTER_ARGUMENT_INVALID')
+        assert.error_reason(reversed, 'LEVEL_TRANSITION_REVERSED')
+
+        local invalid_transitions = {
+            { old_level = 0, new_level = 2, field = 'old_level' },
+            { old_level = 1.5, new_level = 2, field = 'old_level' },
+            { old_level = 1, new_level = 5, field = 'new_level' },
+            { old_level = 1, new_level = 2.5, field = 'new_level' },
+        }
+        local index
+        for index = 1, #invalid_transitions do
+            local vector = invalid_transitions[index]
+            local result = Progression.collect_level_rewards(
+                curve,
+                vector.old_level,
+                vector.new_level
+            )
+            assert.error_code(result, 'CHARACTER_ARGUMENT_INVALID')
+            assert.error_reason(result, 'INTEGER_OUT_OF_RANGE')
+            assert.equal(result.error.details.field, vector.field)
+        end
+
+        local legacy_curve = level_curve()
+        legacy_curve.level_reward_refs = { 'reward_level_two' }
+        local legacy_result = Progression.collect_level_rewards(
+            legacy_curve,
+            1,
+            2
+        )
+        assert.error_code(legacy_result, 'CHARACTER_LEVEL_CURVE_INVALID')
+        assert.error_reason(legacy_result, 'PLAIN_ROW_REQUIRED')
+
+        local sparse_curve = level_curve()
+        sparse_curve.level_reward_refs[3] =
+            sparse_curve.level_reward_refs[2]
+        sparse_curve.level_reward_refs[2] = nil
+        local sparse_result = Progression.collect_level_reward_refs(
+            sparse_curve,
+            1,
+            3
+        )
+        assert.error_code(sparse_result, 'CHARACTER_LEVEL_CURVE_INVALID')
+        assert.error_reason(sparse_result, 'DENSE_ARRAY_REQUIRED')
+    end),
+
+    case('level reward plan digest is deterministic, contextual, and reserves zero for empty plans', function()
+        local plan = level_reward_plan()
+        local before = deep_copy(plan)
+        local first = LevelRewardPlanDigest.derive(plan)
+        local second = LevelRewardPlanDigest.derive(deep_copy(plan))
+        assert.equal(first.ok, true)
+        assert.equal(second.ok, true)
+        assert.equal(first.value.count, 2)
+        assert.equal(#first.value.digest, 64)
+        assert.not_nil(string.match(first.value.digest, '^[a-f0-9]+$'))
+        assert.equal(
+            first.value.digest,
+            'f370a196f7277d372ec9618fed25baba1bb76e285ce9168f04ee2c564360ad4d'
+        )
+        assert.equal(first.value.digest, second.value.digest)
+        assert.equal(
+            first.value.digest == LevelRewardPlanDigest.ZERO_DIGEST,
+            false
+        )
+        assert.deep_equal(plan, before)
+
+        local changed_reward = level_reward_plan()
+        changed_reward.rewards[1].reward_ref = 'reward_level_two_variant'
+        local changed_reward_result = LevelRewardPlanDigest.derive(changed_reward)
+        assert.equal(changed_reward_result.ok, true)
+        assert.equal(changed_reward_result.value.digest == first.value.digest, false)
+
+        local changed_revision = level_reward_plan()
+        changed_revision.expected_revision = 12
+        local changed_revision_result = LevelRewardPlanDigest.derive(
+            changed_revision
+        )
+        assert.equal(changed_revision_result.ok, true)
+        assert.equal(changed_revision_result.value.digest == first.value.digest, false)
+
+        local changed_character = level_reward_plan()
+        changed_character.character_id = 'char_rival'
+        local changed_character_result = LevelRewardPlanDigest.derive(
+            changed_character
+        )
+        assert.equal(changed_character_result.ok, true)
+        assert.equal(
+            changed_character_result.value.digest == first.value.digest,
+            false
+        )
+
+        local changed_definition = level_reward_plan()
+        changed_definition.definition_version = 8
+        local changed_definition_result = LevelRewardPlanDigest.derive(
+            changed_definition
+        )
+        assert.equal(changed_definition_result.ok, true)
+        assert.equal(
+            changed_definition_result.value.digest == first.value.digest,
+            false
+        )
+
+        local changed_curve = level_reward_plan()
+        changed_curve.curve_id = 'curve_level_challenge'
+        local changed_curve_result = LevelRewardPlanDigest.derive(changed_curve)
+        assert.equal(changed_curve_result.ok, true)
+        assert.equal(changed_curve_result.value.digest == first.value.digest, false)
+
+        local changed_interval = level_reward_plan()
+        changed_interval.new_level = 4
+        local changed_interval_result = LevelRewardPlanDigest.derive(
+            changed_interval
+        )
+        assert.equal(changed_interval_result.ok, true)
+        assert.equal(
+            changed_interval_result.value.digest == first.value.digest,
+            false
+        )
+
+        local empty = level_reward_plan()
+        empty.old_level = 3
+        empty.new_level = 3
+        empty.rewards = {}
+        local empty_result = LevelRewardPlanDigest.derive(empty)
+        assert.equal(empty_result.ok, true)
+        assert.equal(empty_result.value.count, 0)
+        assert.equal(
+            empty_result.value.digest,
+            LevelRewardPlanDigest.ZERO_DIGEST
+        )
+        assert.equal(LevelRewardPlanDigest.ZERO_DIGEST, string.rep('0', 64))
+    end),
+
+    case('level reward plan digest rejects non-exact and hostile shapes', function()
+        local function assert_plan_invalid(plan, reason)
+            local result = LevelRewardPlanDigest.derive(plan)
+            assert.error_code(result, 'CHARACTER_REWARD_PLAN_INVALID')
+            if reason ~= nil then
+                assert.error_reason(result, reason)
+            end
+            return result
+        end
+
+        local unknown_plan_field = level_reward_plan()
+        unknown_plan_field.unexpected = true
+        assert_plan_invalid(unknown_plan_field, 'UNKNOWN_FIELD')
+
+        local missing_plan_field = level_reward_plan()
+        missing_plan_field.expected_revision = nil
+        assert_plan_invalid(missing_plan_field, 'FIELD_REQUIRED')
+
+        local unknown_row_field = level_reward_plan()
+        unknown_row_field.rewards[1].unexpected = true
+        assert_plan_invalid(unknown_row_field, 'UNKNOWN_FIELD')
+
+        local missing_row_field = level_reward_plan()
+        missing_row_field.rewards[1].reward_ref = nil
+        assert_plan_invalid(missing_row_field, 'FIELD_REQUIRED')
+
+        local legacy_row = level_reward_plan()
+        legacy_row.rewards = { 'reward_level_two' }
+        assert_plan_invalid(legacy_row, 'PLAIN_TABLE_REQUIRED')
+
+        local non_string_row_field = level_reward_plan()
+        non_string_row_field.rewards[1][1] = true
+        assert_plan_invalid(non_string_row_field, 'STRING_FIELDS_REQUIRED')
+
+        local invalid_reward_ref = level_reward_plan()
+        invalid_reward_ref.rewards[1].reward_ref = 'item_level_two'
+        assert_plan_invalid(invalid_reward_ref, 'REWARD_REF_INVALID')
+
+        local sparse_rewards = level_reward_plan()
+        sparse_rewards.rewards[3] = sparse_rewards.rewards[2]
+        sparse_rewards.rewards[2] = nil
+        assert_plan_invalid(
+            sparse_rewards,
+            'PLAIN_DENSE_REWARD_ARRAY_REQUIRED'
+        )
+
+        local hostile_metatable = {
+            __index = function()
+                error('hostile digest __index must not be invoked')
+            end,
+            __len = function()
+                error('hostile digest __len must not be invoked')
+            end,
+            __pairs = function()
+                error('hostile digest __pairs must not be invoked')
+            end,
+            __metatable = 'locked-hostile-digest-metatable',
+        }
+
+        local hostile_plan = level_reward_plan()
+        setmetatable(hostile_plan, hostile_metatable)
+        assert_plan_invalid(hostile_plan, 'PLAIN_TABLE_REQUIRED')
+
+        local hostile_rewards = level_reward_plan()
+        setmetatable(hostile_rewards.rewards, hostile_metatable)
+        assert_plan_invalid(
+            hostile_rewards,
+            'PLAIN_DENSE_REWARD_ARRAY_REQUIRED'
+        )
+
+        local hostile_row = level_reward_plan()
+        setmetatable(hostile_row.rewards[1], hostile_metatable)
+        assert_plan_invalid(hostile_row, 'PLAIN_TABLE_REQUIRED')
+    end),
+
+    case('level reward plan digest enforces transition bounds, strict order, and 64 rows', function()
+        assert.equal(LevelRewardPlanDigest.MAX_REWARD_REFS, 64)
+
+        local safe_maximum = level_reward_plan()
+        safe_maximum.definition_version = Progression.MAX_SAFE_INTEGER
+        safe_maximum.expected_revision = Progression.MAX_SAFE_INTEGER
+        safe_maximum.old_level = 99
+        safe_maximum.new_level = 100
+        safe_maximum.rewards = {
+            { reached_level = 100, reward_ref = 'reward_level_100' },
+        }
+        assert.equal(LevelRewardPlanDigest.derive(safe_maximum).ok, true)
+
+        local definition_overflow = deep_copy(safe_maximum)
+        definition_overflow.definition_version = Progression.MAX_SAFE_INTEGER + 1
+        assert.error_reason(
+            LevelRewardPlanDigest.derive(definition_overflow),
+            'DEFINITION_VERSION_INVALID'
+        )
+
+        local revision_overflow = deep_copy(safe_maximum)
+        revision_overflow.expected_revision = Progression.MAX_SAFE_INTEGER + 1
+        assert.error_reason(
+            LevelRewardPlanDigest.derive(revision_overflow),
+            'EXPECTED_REVISION_INVALID'
+        )
+
+        local level_cap = deep_copy(safe_maximum)
+        level_cap.old_level = 100
+        level_cap.new_level = 100
+        level_cap.rewards = {}
+        assert.equal(LevelRewardPlanDigest.derive(level_cap).ok, true)
+
+        local above_level_cap = deep_copy(level_cap)
+        above_level_cap.new_level = 101
+        assert.error_reason(
+            LevelRewardPlanDigest.derive(above_level_cap),
+            'NEW_LEVEL_INVALID'
+        )
+
+        local at_old_level = level_reward_plan()
+        at_old_level.rewards[1].reached_level = 1
+        local at_old_result = LevelRewardPlanDigest.derive(at_old_level)
+        assert.error_code(at_old_result, 'CHARACTER_REWARD_PLAN_INVALID')
+        assert.error_reason(at_old_result, 'REACHED_LEVEL_OUTSIDE_TRANSITION')
+
+        local above_new_level = level_reward_plan()
+        above_new_level.rewards[2].reached_level = 4
+        local above_new_result = LevelRewardPlanDigest.derive(above_new_level)
+        assert.error_code(above_new_result, 'CHARACTER_REWARD_PLAN_INVALID')
+        assert.error_reason(
+            above_new_result,
+            'REACHED_LEVEL_OUTSIDE_TRANSITION'
+        )
+
+        local duplicate = level_reward_plan()
+        duplicate.rewards[2].reached_level = 2
+        local duplicate_result = LevelRewardPlanDigest.derive(duplicate)
+        assert.error_code(duplicate_result, 'CHARACTER_REWARD_PLAN_INVALID')
+        assert.error_reason(
+            duplicate_result,
+            'STRICT_ASCENDING_REACHED_LEVEL_REQUIRED'
+        )
+
+        local reversed = level_reward_plan()
+        reversed.rewards[1].reached_level = 3
+        reversed.rewards[2].reached_level = 2
+        local reversed_result = LevelRewardPlanDigest.derive(reversed)
+        assert.error_code(reversed_result, 'CHARACTER_REWARD_PLAN_INVALID')
+        assert.error_reason(
+            reversed_result,
+            'STRICT_ASCENDING_REACHED_LEVEL_REQUIRED'
+        )
+
+        local maximum = level_reward_plan()
+        maximum.new_level = 65
+        maximum.rewards = {}
+        local index
+        for index = 1, LevelRewardPlanDigest.MAX_REWARD_REFS do
+            maximum.rewards[index] = {
+                reached_level = index + 1,
+                reward_ref = 'reward_level_' .. tostring(index + 1),
+            }
+        end
+        local maximum_result = LevelRewardPlanDigest.derive(maximum)
+        assert.equal(maximum_result.ok, true)
+        assert.equal(maximum_result.value.count, 64)
+        assert.equal(#maximum_result.value.digest, 64)
+
+        local over_limit = deep_copy(maximum)
+        over_limit.new_level = 66
+        over_limit.rewards[65] = {
+            reached_level = 66,
+            reward_ref = 'reward_level_66',
+        }
+        local over_limit_result = LevelRewardPlanDigest.derive(over_limit)
+        assert.error_code(over_limit_result, 'CHARACTER_REWARD_PLAN_INVALID')
+        assert.error_reason(
+            over_limit_result,
+            'REWARD_REF_COUNT_LIMIT_EXCEEDED'
+        )
     end),
 
     case('stat pipeline computes the complete documented base formula block', function()

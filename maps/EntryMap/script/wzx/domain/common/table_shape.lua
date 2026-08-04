@@ -2,12 +2,17 @@ local Ordered = require 'wzx.domain.common.ordered'
 local Result = require 'wzx.domain.common.result'
 
 local TableShape = {}
+local get_metatable = getmetatable
 local is_dense_array = Ordered.is_dense_array
+local math_huge = math.huge
+local raw_get = rawget
 local result_err = Result.err
 local result_ok = Result.ok
 local sorted_string_keys = Ordered.sorted_string_keys
 local math_floor = math.floor
 local raw_next = next
+local tostring_value = tostring
+local type_value = type
 
 local MAX_SAFE_INTEGER = 9007199254740991
 
@@ -19,17 +24,17 @@ local function invalid(path, reason, details)
 end
 
 local function is_integer(value)
-    return type(value) == 'number'
+    return type_value(value) == 'number'
         and value == value
-        and value ~= math.huge
-        and value ~= -math.huge
+        and value ~= math_huge
+        and value ~= -math_huge
         and value == math_floor(value)
         and value >= -MAX_SAFE_INTEGER
         and value <= MAX_SAFE_INTEGER
 end
 
 local function inspect(value, path, table_depth, maximum_table_depth, active)
-    local value_type = type(value)
+    local value_type = type_value(value)
     if value_type == 'string' or value_type == 'boolean' then
         return nil
     end
@@ -44,7 +49,7 @@ local function inspect(value, path, table_depth, maximum_table_depth, active)
             actual_type = value_type,
         })
     end
-    if getmetatable(value) ~= nil then
+    if get_metatable(value) ~= nil then
         return invalid(path, 'PLAIN_TABLE_REQUIRED')
     end
     if table_depth > maximum_table_depth then
@@ -64,8 +69,8 @@ local function inspect(value, path, table_depth, maximum_table_depth, active)
         local index
         for index = 1, #value do
             child_error = inspect(
-                value[index],
-                path .. '[' .. tostring(index) .. ']',
+                raw_get(value, index),
+                path .. '[' .. tostring_value(index) .. ']',
                 table_depth + 1,
                 maximum_table_depth,
                 active
@@ -77,7 +82,7 @@ local function inspect(value, path, table_depth, maximum_table_depth, active)
         end
     else
         for key in raw_next, value do
-            if type(key) ~= 'string' or key == '' then
+            if type_value(key) ~= 'string' or key == '' then
                 active[value] = nil
                 return invalid(path, 'NON_EMPTY_STRING_MAP_KEY_REQUIRED')
             end
@@ -91,7 +96,7 @@ local function inspect(value, path, table_depth, maximum_table_depth, active)
         for index = 1, #keys_result.value do
             key = keys_result.value[index]
             child_error = inspect(
-                rawget(value, key),
+                raw_get(value, key),
                 path .. '.' .. key,
                 table_depth + 1,
                 maximum_table_depth,
@@ -108,7 +113,7 @@ local function inspect(value, path, table_depth, maximum_table_depth, active)
 end
 
 local function copy(value, copies)
-    if type(value) ~= 'table' then
+    if type_value(value) ~= 'table' then
         return value
     end
     if copies[value] ~= nil then
@@ -137,8 +142,8 @@ function TableShape.is_integer(value, minimum, maximum)
     return true
 end
 
-function TableShape.validate_serializable(value, maximum_table_depth, root_path)
-    if type(maximum_table_depth) ~= 'number'
+local function validate_serializable(value, maximum_table_depth, root_path)
+    if type_value(maximum_table_depth) ~= 'number'
         or maximum_table_depth ~= math_floor(maximum_table_depth)
         or maximum_table_depth < 1
     then
@@ -150,14 +155,16 @@ function TableShape.validate_serializable(value, maximum_table_depth, root_path)
     end
     return result_ok(value)
 end
+TableShape.validate_serializable = validate_serializable
 
-function TableShape.deep_copy_serializable(value, maximum_table_depth, root_path)
-    local validated = TableShape.validate_serializable(value, maximum_table_depth, root_path)
+local function deep_copy_serializable(value, maximum_table_depth, root_path)
+    local validated = validate_serializable(value, maximum_table_depth, root_path)
     if not validated.ok then
         return validated
     end
     return result_ok(copy(value, {}))
 end
+TableShape.deep_copy_serializable = deep_copy_serializable
 
 TableShape.MAX_SAFE_INTEGER = MAX_SAFE_INTEGER
 

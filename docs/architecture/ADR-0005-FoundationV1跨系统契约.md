@@ -99,3 +99,11 @@ Y3 表存档的槽根表不计入“三层嵌套”：`payload` 是第 1 层、s
 - 所有 `mutating=true` 操作必须同时 `requires_idempotency=true`。已接受写操作的成功 DTO 顶层必须包含 `request_key=context.idempotency_key`；错误完成必须在 `error.details.request_key` 回显同一键。
 - 已接受写操作遇到畸形/超预算/错 request_key 的结果、内部 `PORT_*`/`FAKE_*` 错误、`PLATFORM_UNAVAILABLE` 或 `PLATFORM_RATE_LIMITED` 时，一律向上转换为不可盲重试的 `PLATFORM_RESULT_UNKNOWN`，并给出 `QUERY_OR_RECONCILE`。同步 admission 错误表示请求未被接受，不适用此转换。
 - Port spec、operation 描述、App/service/schema facade、runtime host 和 registry 实例均使用私有 backing 与空壳只读 view。公开 operation 列表只是 defensive copy，修改它不得改变真实 validator 或 guard。
+
+## 8. 角色等级曲线与升级奖励计划
+
+- `LevelCurve.experience_cap` 是必填安全整数，范围为 `cumulative_exp_by_level[level_cap]..2^53-1`。角色满级后仍可累计阅历到该硬上限；任何会越界的增加必须整笔拒绝，不得钳制、部分应用或生成奖励计划。
+- `LevelCurve.level_reward_refs` 只允许省略、空数组，或最多 64 行的精确 `{ reached_level, reward_ref }` 数组。`reached_level` 必须在 `2..level_cap` 严格递增，因此每个等级最多对应一个奖励包；`reward_ref` 必须是 `reward_` 内容 ID。省略与空数组统一规范化为空数组；旧版非空扁平字符串数组没有无歧义的等级含义，禁止猜测迁移并失败关闭。
+- 等级变化只收集 `(old_level, new_level]` 内的奖励行。纯计划结构必须携带 `character_id`、`definition_version`、`curve_id`、`expected_revision`、`old_level`、`new_level` 和有序奖励行，输出 `reward_ref_count` 与 `reward_plan_digest`；非空计划摘要必须绑定这些字段。
+- 空计划固定使用 64 个 `0` 的摘要哨兵；该哨兵只表达“没有奖励引用”，不证明角色、定义、曲线、修订或等级区间。当前外层 `command_digest` 也没有冻结全部计划上下文，因此受信用例必须把零计划与已验证的状态转换原子处理，且在完整端到端证明落地前生产阅历发奖保持关闭。非空计划先在 namespace `character_level_reward_plan_step` 中按序把 `ordinal/reached_level/reward_ref/previous_digest` 组成 SHA-256 哈希链，再在 namespace `character_level_reward_plan` 中把角色/定义/曲线/修订/等级区间、计数与最终链摘要封口；结果必须为非哨兵的小写 SHA-256。对非空计划改变上下文、顺序、等级或奖励引用必须改变摘要。
+- 该摘要只证明纯 Lua 层准备提交的奖励意图，不构成奖励权益或平台提交证明。系统 10 的密封奖励目录 authority 负责验证引用并展开实际奖励；在该 authority 与完整 XP 加载、发奖、保存、查询/对账恢复循环通过门禁前，生产阅历发奖必须保持关闭。离线 Fake 或摘要黄金向量不得被表述为真实 Y3 平台能力已经验证。

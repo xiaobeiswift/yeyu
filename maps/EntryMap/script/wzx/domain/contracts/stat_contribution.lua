@@ -2,6 +2,14 @@ local Result = require 'wzx.domain.common.result'
 local Validation = require 'wzx.domain.contracts.validation'
 
 local StatContribution = {}
+local result_ok = Result.ok
+local validation_enum = Validation.enum
+local validation_first = Validation.first
+local validation_integer = Validation.integer
+local validation_no_unknown_fields = Validation.no_unknown_fields
+local validation_sorted_unique_strings = Validation.sorted_unique_strings
+local validation_source_reference = Validation.source_reference
+local validation_stable_order_key = Validation.stable_order_key
 
 local CONTRACT = 'StatContributionV1'
 local ALLOWED_FIELDS = {
@@ -55,24 +63,38 @@ local TARGET_STATS = {
 }
 
 function StatContribution.validate(value)
-    local err = Validation.no_unknown_fields(CONTRACT, value, ALLOWED_FIELDS)
+    local err = validation_no_unknown_fields(CONTRACT, value, ALLOWED_FIELDS)
     if err ~= nil then
         return err
     end
-    err = Validation.first(
-        Validation.enum(CONTRACT, 'source_type', value.source_type, SOURCE_TYPES),
-        Validation.source_reference(CONTRACT, 'source_id', value.source_id),
-        Validation.enum(CONTRACT, 'target_stat', value.target_stat, TARGET_STATS),
-        Validation.enum(CONTRACT, 'operation', value.operation, OPERATIONS),
-        Validation.integer(CONTRACT, 'value', value.value, -1000000000, 1000000000),
-        Validation.integer(CONTRACT, 'priority', value.priority, -1000, 1000),
-        Validation.sorted_unique_strings(CONTRACT, 'condition_tags', value.condition_tags),
-        Validation.stable_order_key(CONTRACT, 'stable_order_key', value.stable_order_key)
+    err = validation_first(
+        validation_enum(CONTRACT, 'source_type', value.source_type, SOURCE_TYPES),
+        validation_source_reference(CONTRACT, 'source_id', value.source_id),
+        validation_enum(CONTRACT, 'target_stat', value.target_stat, TARGET_STATS),
+        validation_enum(CONTRACT, 'operation', value.operation, OPERATIONS),
+        validation_integer(
+            CONTRACT,
+            'value',
+            value.value,
+            -1000000000,
+            1000000000
+        ),
+        validation_integer(CONTRACT, 'priority', value.priority, -1000, 1000),
+        validation_sorted_unique_strings(
+            CONTRACT,
+            'condition_tags',
+            value.condition_tags
+        ),
+        validation_stable_order_key(
+            CONTRACT,
+            'stable_order_key',
+            value.stable_order_key
+        )
     )
     if err ~= nil then
         return err
     end
-    return Result.ok(value)
+    return result_ok(value)
 end
 
 return StatContribution

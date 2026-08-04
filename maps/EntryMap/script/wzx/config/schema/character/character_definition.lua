@@ -2,6 +2,19 @@ local Result = require 'wzx.domain.common.result'
 local Validation = require 'wzx.config.schema.character.validation'
 
 local CharacterDefinition = {}
+local raw_get = rawget
+local result_ok = Result.ok
+local validation_boolean = Validation.boolean
+local validation_content_id = Validation.content_id
+local validation_enum = Validation.enum
+local validation_exact_integer_map = Validation.exact_integer_map
+local validation_first = Validation.first
+local validation_integer = Validation.integer
+local validation_no_unknown_fields = Validation.no_unknown_fields
+local validation_non_empty_string = Validation.non_empty_string
+local validation_sorted_unique_content_ids =
+    Validation.sorted_unique_content_ids
+local validation_sorted_unique_strings = Validation.sorted_unique_strings
 
 local SCHEMA = 'CharacterDefinition'
 local FIELDS = {
@@ -45,7 +58,7 @@ local function copy_array(value)
     local copy = {}
     local index
     for index = 1, #value do
-        copy[index] = value[index]
+        copy[index] = raw_get(value, index)
     end
     return copy
 end
@@ -54,28 +67,46 @@ local function copy_map(value, keys)
     local copy = {}
     local index
     for index = 1, #keys do
-        local key = keys[index]
-        copy[key] = value[key]
+        local key = raw_get(keys, index)
+        copy[key] = raw_get(value, key)
     end
     return copy
 end
 
 function CharacterDefinition.validate(value)
-    local err = Validation.no_unknown_fields(SCHEMA, value, FIELDS)
+    local err = validation_no_unknown_fields(SCHEMA, value, FIELDS)
     if err ~= nil then
         return err
     end
 
-    err = Validation.first(
-        Validation.content_id(SCHEMA, 'id', value.id, 'char_'),
-        Validation.integer(SCHEMA, 'schema_version', value.schema_version, 1),
-        Validation.integer(SCHEMA, 'definition_version', value.definition_version, 1),
-        Validation.non_empty_string(SCHEMA, 'display_name_key', value.display_name_key),
-        Validation.non_empty_string(SCHEMA, 'description_key', value.description_key),
-        Validation.enum(SCHEMA, 'role', value.role, ROLES),
-        Validation.content_id(SCHEMA, 'level_curve_id', value.level_curve_id, 'curve_level_'),
-        Validation.content_id(SCHEMA, 'formula_set_id', value.formula_set_id),
-        Validation.exact_integer_map(
+    err = validation_first(
+        validation_content_id(SCHEMA, 'id', value.id, 'char_'),
+        validation_integer(SCHEMA, 'schema_version', value.schema_version, 1),
+        validation_integer(
+            SCHEMA,
+            'definition_version',
+            value.definition_version,
+            1
+        ),
+        validation_non_empty_string(
+            SCHEMA,
+            'display_name_key',
+            value.display_name_key
+        ),
+        validation_non_empty_string(
+            SCHEMA,
+            'description_key',
+            value.description_key
+        ),
+        validation_enum(SCHEMA, 'role', value.role, ROLES),
+        validation_content_id(
+            SCHEMA,
+            'level_curve_id',
+            value.level_curve_id,
+            'curve_level_'
+        ),
+        validation_content_id(SCHEMA, 'formula_set_id', value.formula_set_id),
+        validation_exact_integer_map(
             SCHEMA,
             'base_primary',
             value.base_primary,
@@ -83,7 +114,7 @@ function CharacterDefinition.validate(value)
             0,
             9999
         ),
-        Validation.exact_integer_map(
+        validation_exact_integer_map(
             SCHEMA,
             'growth_per_level_milli',
             value.growth_per_level_milli,
@@ -91,7 +122,7 @@ function CharacterDefinition.validate(value)
             0,
             100000
         ),
-        Validation.exact_integer_map(
+        validation_exact_integer_map(
             SCHEMA,
             'weapon_aptitudes',
             value.weapon_aptitudes,
@@ -99,23 +130,34 @@ function CharacterDefinition.validate(value)
             0,
             10000
         ),
-        Validation.sorted_unique_content_ids(
+        validation_sorted_unique_content_ids(
             SCHEMA,
             'default_talent_ids',
             value.default_talent_ids,
             'talent_',
             true
         ),
-        Validation.integer(SCHEMA, 'initial_qi', value.initial_qi, 0, 2000, true),
-        Validation.content_id(SCHEMA, 'model_asset_id', value.model_asset_id),
-        Validation.content_id(SCHEMA, 'portrait_asset_id', value.portrait_asset_id),
-        Validation.sorted_unique_strings(SCHEMA, 'tags', value.tags, true),
-        Validation.boolean(SCHEMA, 'deprecated', value.deprecated, true)
+        validation_integer(
+            SCHEMA,
+            'initial_qi',
+            value.initial_qi,
+            0,
+            2000,
+            true
+        ),
+        validation_content_id(SCHEMA, 'model_asset_id', value.model_asset_id),
+        validation_content_id(
+            SCHEMA,
+            'portrait_asset_id',
+            value.portrait_asset_id
+        ),
+        validation_sorted_unique_strings(SCHEMA, 'tags', value.tags, true),
+        validation_boolean(SCHEMA, 'deprecated', value.deprecated, true)
     )
     if err ~= nil then
         return err
     end
-    return Result.ok({
+    return result_ok({
         id = value.id,
         schema_version = value.schema_version,
         definition_version = value.definition_version,

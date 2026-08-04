@@ -2,6 +2,12 @@ local Result = require 'wzx.domain.common.result'
 local Validation = require 'wzx.config.schema.character.validation'
 
 local AttributeFormulaSet = {}
+local raw_get = rawget
+local result_ok = Result.ok
+local validation_content_id = Validation.content_id
+local validation_first = Validation.first
+local validation_integer = Validation.integer
+local validation_no_unknown_fields = Validation.no_unknown_fields
 
 local SCHEMA = 'AttributeFormulaSet'
 local COEFFICIENT_FIELDS = {
@@ -36,22 +42,22 @@ for index = 1, #COEFFICIENT_FIELDS do
 end
 
 function AttributeFormulaSet.validate(value)
-    local err = Validation.no_unknown_fields(SCHEMA, value, FIELDS)
+    local err = validation_no_unknown_fields(SCHEMA, value, FIELDS)
     if err ~= nil then
         return err
     end
 
-    err = Validation.first(
-        Validation.content_id(SCHEMA, 'id', value.id),
-        Validation.integer(SCHEMA, 'formula_version', value.formula_version, 1)
+    err = validation_first(
+        validation_content_id(SCHEMA, 'id', value.id),
+        validation_integer(SCHEMA, 'formula_version', value.formula_version, 1)
     )
     if err ~= nil then
         return err
     end
 
     for index = 1, #COEFFICIENT_FIELDS do
-        local field = COEFFICIENT_FIELDS[index]
-        err = Validation.integer(SCHEMA, field, value[field])
+        local field = raw_get(COEFFICIENT_FIELDS, index)
+        err = validation_integer(SCHEMA, field, raw_get(value, field))
         if err ~= nil then
             return err
         end
@@ -61,10 +67,10 @@ function AttributeFormulaSet.validate(value)
         formula_version = value.formula_version,
     }
     for index = 1, #COEFFICIENT_FIELDS do
-        local field = COEFFICIENT_FIELDS[index]
-        normalized[field] = value[field]
+        local field = raw_get(COEFFICIENT_FIELDS, index)
+        normalized[field] = raw_get(value, field)
     end
-    return Result.ok(normalized)
+    return result_ok(normalized)
 end
 
 return AttributeFormulaSet

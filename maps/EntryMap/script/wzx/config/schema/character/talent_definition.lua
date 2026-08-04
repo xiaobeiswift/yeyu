@@ -3,6 +3,24 @@ local StatContribution = require 'wzx.domain.contracts.stat_contribution'
 local Validation = require 'wzx.config.schema.character.validation'
 
 local TalentDefinition = {}
+local get_metatable = getmetatable
+local raw_get = rawget
+local result_ok = Result.ok
+local stat_contribution_validate = StatContribution.validate
+local type_value = type
+local validation_boolean = Validation.boolean
+local validation_bytewise_string_less = Validation.bytewise_string_less
+local validation_content_id = Validation.content_id
+local validation_dense_array = Validation.dense_array
+local validation_error_summary = Validation.error_summary
+local validation_first = Validation.first
+local validation_integer = Validation.integer
+local validation_invalid = Validation.invalid
+local validation_no_unknown_fields = Validation.no_unknown_fields
+local validation_non_empty_string = Validation.non_empty_string
+local validation_sorted_unique_content_ids =
+    Validation.sorted_unique_content_ids
+local validation_sorted_unique_strings = Validation.sorted_unique_strings
 
 local SCHEMA = 'TalentDefinition'
 local FIELDS = {
@@ -22,7 +40,7 @@ local function copy_array(value)
     local copy = {}
     local index
     for index = 1, #value do
-        copy[index] = value[index]
+        copy[index] = raw_get(value, index)
     end
     return copy
 end
@@ -41,7 +59,7 @@ local function copy_contribution(value)
 end
 
 local function validate_contributions(value)
-    local err = Validation.dense_array(SCHEMA, 'contributions', value)
+    local err = validation_dense_array(SCHEMA, 'contributions', value)
     if err ~= nil then
         return err
     end
@@ -51,40 +69,43 @@ local function validate_contributions(value)
     local seen_order_keys = {}
     local index
     for index = 1, #value do
-        if type(value[index]) ~= 'table' or getmetatable(value[index]) ~= nil then
-            return Validation.invalid(
-                SCHEMA,
-                'contributions',
-                'STAT_CONTRIBUTION_INVALID',
-                { index = index }
-            )
-        end
-        if type(value[index].condition_tags) ~= 'table'
-            or getmetatable(value[index].condition_tags) ~= nil
+        local contribution = raw_get(value, index)
+        if type_value(contribution) ~= 'table'
+            or get_metatable(contribution) ~= nil
         then
-            return Validation.invalid(
+            return validation_invalid(
                 SCHEMA,
                 'contributions',
                 'STAT_CONTRIBUTION_INVALID',
                 { index = index }
             )
         end
-        local checked = StatContribution.validate(value[index])
+        local condition_tags = raw_get(contribution, 'condition_tags')
+        if type_value(condition_tags) ~= 'table'
+            or get_metatable(condition_tags) ~= nil
+        then
+            return validation_invalid(
+                SCHEMA,
+                'contributions',
+                'STAT_CONTRIBUTION_INVALID',
+                { index = index }
+            )
+        end
+        local checked = stat_contribution_validate(contribution)
         if not checked.ok then
-            return Validation.invalid(
+            return validation_invalid(
                 SCHEMA,
                 'contributions',
                 'STAT_CONTRIBUTION_INVALID',
                 {
                     index = index,
-                    cause = Validation.error_summary(checked.error),
+                    cause = validation_error_summary(checked.error),
                 }
             )
         end
 
-        local contribution = value[index]
         if contribution.source_type ~= 'TALENT' then
-            return Validation.invalid(
+            return validation_invalid(
                 SCHEMA,
                 'contributions',
                 'SOURCE_TYPE_MUST_BE_TALENT',
@@ -94,7 +115,7 @@ local function validate_contributions(value)
         if contribution.operation == 'MULTIPLY_BP'
             and (contribution.value < 0 or contribution.value > 50000)
         then
-            return Validation.invalid(
+            return validation_invalid(
                 SCHEMA,
                 'contributions',
                 'MULTIPLIER_OUT_OF_RANGE',
@@ -102,7 +123,7 @@ local function validate_contributions(value)
             )
         end
         if seen_order_keys[contribution.stable_order_key] then
-            return Validation.invalid(
+            return validation_invalid(
                 SCHEMA,
                 'contributions',
                 'STABLE_ORDER_KEY_DUPLICATE',
@@ -112,12 +133,12 @@ local function validate_contributions(value)
         if previous_priority ~= nil
             and (previous_priority > contribution.priority
                 or (previous_priority == contribution.priority
-                    and not Validation.bytewise_string_less(
+                    and not validation_bytewise_string_less(
                         previous_order_key,
                         contribution.stable_order_key
                     )))
         then
-            return Validation.invalid(
+            return validation_invalid(
                 SCHEMA,
                 'contributions',
                 'CONTRIBUTIONS_NOT_STRICTLY_ORDERED',
@@ -132,31 +153,35 @@ local function validate_contributions(value)
 end
 
 function TalentDefinition.validate(value)
-    local err = Validation.no_unknown_fields(SCHEMA, value, FIELDS)
+    local err = validation_no_unknown_fields(SCHEMA, value, FIELDS)
     if err ~= nil then
         return err
     end
 
-    err = Validation.first(
-        Validation.content_id(SCHEMA, 'id', value.id, 'talent_'),
-        Validation.integer(SCHEMA, 'schema_version', value.schema_version, 1),
-        Validation.non_empty_string(SCHEMA, 'name_key', value.name_key),
-        Validation.non_empty_string(SCHEMA, 'description_key', value.description_key),
-        Validation.content_id(SCHEMA, 'unlock_rule_id', value.unlock_rule_id),
-        Validation.sorted_unique_content_ids(
+    err = validation_first(
+        validation_content_id(SCHEMA, 'id', value.id, 'talent_'),
+        validation_integer(SCHEMA, 'schema_version', value.schema_version, 1),
+        validation_non_empty_string(SCHEMA, 'name_key', value.name_key),
+        validation_non_empty_string(
+            SCHEMA,
+            'description_key',
+            value.description_key
+        ),
+        validation_content_id(SCHEMA, 'unlock_rule_id', value.unlock_rule_id),
+        validation_sorted_unique_content_ids(
             SCHEMA,
             'combat_hook_ids',
             value.combat_hook_ids
         ),
-        Validation.content_id(
+        validation_content_id(
             SCHEMA,
             'exclusive_group',
             value.exclusive_group,
             nil,
             true
         ),
-        Validation.sorted_unique_strings(SCHEMA, 'tags', value.tags),
-        Validation.boolean(SCHEMA, 'deprecated', value.deprecated)
+        validation_sorted_unique_strings(SCHEMA, 'tags', value.tags),
+        validation_boolean(SCHEMA, 'deprecated', value.deprecated)
     )
     if err ~= nil then
         return err
@@ -169,9 +194,11 @@ function TalentDefinition.validate(value)
     local contributions = {}
     local index
     for index = 1, #value.contributions do
-        contributions[index] = copy_contribution(value.contributions[index])
+        contributions[index] = copy_contribution(
+            raw_get(value.contributions, index)
+        )
     end
-    return Result.ok({
+    return result_ok({
         id = value.id,
         schema_version = value.schema_version,
         name_key = value.name_key,

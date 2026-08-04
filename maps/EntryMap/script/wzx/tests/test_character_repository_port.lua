@@ -918,6 +918,9 @@ return {
         request.after_state.unlocked_talent_ids = { 'talent_changed' }
         assert_request_invalid('commit_character_transaction', request)
 
+        request = experience_request(true, 2)
+        assert_request_invalid('commit_character_transaction', request)
+
         request = experience_request(false)
         request.receipt_id = request.before_state.created_receipt_id
         request.context.idempotency_key = transport_key(request.receipt_id)
@@ -1275,6 +1278,11 @@ return {
         value.result.old_level = 99
         value.result.new_level = 99
         value.result_digest = result_digest(EXPERIENCE, value.result)
+        assert_success_invalid('query_character_transaction', value, request)
+
+        commit_request = experience_request(true, 2)
+        request = query_request(commit_request)
+        value = query_value(request, 'COMMITTED', commit_request)
         assert_success_invalid('query_character_transaction', value, request)
 
         local reused_identities = {
