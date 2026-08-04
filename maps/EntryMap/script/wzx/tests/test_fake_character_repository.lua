@@ -752,7 +752,17 @@ return {
                 end
             )
         assert.error_code(guarded_rejected, 'IDEMPOTENCY_KEY_REUSED')
+        assert.deep_equal(guarded_rejected.error.details, {
+            reason = 'BUSINESS_RECEIPT_IDENTITY_MISMATCH',
+            receipt_id = rebound.receipt_id,
+            request_key = rebound.context.idempotency_key,
+        })
+        assert.is_nil(
+            guarded_rejected.error.details.expected_fingerprint
+        )
+        assert.is_nil(guarded_rejected.error.details.actual_fingerprint)
         assert.equal(guarded_callback_count, 0)
+        assert.equal(#fake:get_calls('commit_character_transaction'), 1)
 
         local cross_player = deep_copy(request)
         cross_player.context = context('receipt_cross_player', request.receipt_id)
@@ -1270,12 +1280,20 @@ return {
             context_suffix = 'cas_repurpose',
         })
         local callback_count = 0
-        local reuse_rejected = fake:commit_character_transaction(
-            repurposed,
-            function()
-                callback_count = callback_count + 1
-            end
-        )
+        local original_pairs = _G.pairs
+        _G.pairs = function()
+            return function() return nil end, nil, nil
+        end
+        local call_ok, reuse_rejected = pcall(function()
+            return fake:commit_character_transaction(
+                repurposed,
+                function()
+                    callback_count = callback_count + 1
+                end
+            )
+        end)
+        _G.pairs = original_pairs
+        assert.equal(call_ok, true)
         assert.error_code(reuse_rejected, 'IDEMPOTENCY_KEY_REUSED')
         assert.equal(callback_count, 0)
         assert.equal(#fake:get_calls('commit_character_transaction'), 1)
@@ -1450,11 +1468,23 @@ return {
             receipt_id = 'character:create:recovery_receipt_002',
             context_suffix = 'recovery_second',
         })
-        local blocked = invoke_and_tick(
-            fake,
-            'commit_character_transaction',
-            second
-        )
+        local blocked
+        local blocked_count = 0
+        local original_next = _G.next
+        _G.next = function() return nil end
+        local call_ok, admission = pcall(function()
+            return fake:commit_character_transaction(second, function(result)
+                blocked_count = blocked_count + 1
+                blocked = result
+            end)
+        end)
+        _G.next = original_next
+        assert.equal(call_ok, true)
+        assert.equal(admission.ok, true)
+        assert.is_nil(blocked)
+        assert.equal(blocked_count, 0)
+        assert.equal(fake:tick(0).value.processed_deliveries, 1)
+        assert.equal(blocked_count, 1)
         assert.error_code(blocked, 'TRANSACTION_RECOVERY_REQUIRED')
         assert.equal(blocked.error.retryable, false)
         assert.deep_equal(blocked.error.details, {
@@ -1464,6 +1494,35 @@ return {
             receipt_id = second.receipt_id,
             transaction_id = second.transaction_id,
         })
+
+        local guarded = CharacterRepository:guard_implementation(fake)
+        assert.equal(guarded.ok, true)
+        local guarded_blocked
+        local guarded_callback_count = 0
+        local guarded_admission =
+            guarded.value:commit_character_transaction(
+                second,
+                function(result)
+                    guarded_callback_count = guarded_callback_count + 1
+                    guarded_blocked = result
+                end
+            )
+        assert.equal(guarded_admission.ok, true)
+        assert.is_nil(guarded_blocked)
+        assert.equal(guarded_callback_count, 0)
+        assert.equal(fake:tick(0).value.processed_deliveries, 1)
+        assert.error_code(
+            guarded_blocked,
+            'TRANSACTION_RECOVERY_REQUIRED'
+        )
+        assert.deep_equal(guarded_blocked.error.details, {
+            reason = 'EARLIER_CHARACTER_TRANSACTION_UNRESOLVED',
+            request_key = second.context.idempotency_key,
+            recovery = 'QUERY_OR_RECONCILE',
+            receipt_id = second.receipt_id,
+            transaction_id = second.transaction_id,
+        })
+        assert.equal(guarded_callback_count, 1)
         assert.equal(fake:get_apply_count(second.receipt_id), 0)
         assert.is_nil(
             fake:get_authority_snapshot().receipts[second.receipt_id]
@@ -1607,6 +1666,22 @@ return {
         assert.throws(function()
             FakeCharacterRepository.new({ unexpected = true })
         end, 'unknown field')
+
+        local shared_characters = {}
+        assert.throws(function()
+            FakeCharacterRepository.new({
+                players = {
+                    {
+                        player_save_scope = 'player001',
+                        characters = shared_characters,
+                    },
+                    {
+                        player_save_scope = 'player002',
+                        characters = shared_characters,
+                    },
+                },
+            })
+        end, 'shared table references')
     end),
 
     case('constructor never treats false options or seed values as missing', function()
@@ -1699,10 +1774,193 @@ return {
         )
     end),
 
+    case('queries bind accepted proofs and receipt owner roles', function()
+        local cas_fake = FakeCharacterRepository.new({
+            players = {
+                {
+                    player_save_scope = 'player001',
+                    character_save_revision = 2,
+                    receipt_save_revision = 0,
+                    characters = {},
+                },
+            },
+        })
+        local conflicted = create_request({
+            receipt_id = 'character:create:query_proof_receipt_001',
+            expected_character_save_revision = 1,
+            context_suffix = 'query_proof_conflict',
+        })
+        assert.error_code(invoke_and_tick(
+            cas_fake,
+            'commit_character_transaction',
+            conflicted
+        ), 'SAVE_REVISION_CONFLICT')
+        assert.is_nil(
+            cas_fake:get_authority_snapshot().receipts[
+                conflicted.receipt_id
+            ]
+        )
+
+        local exact_query = query_request(conflicted, {
+            context_suffix = 'query_proof_exact',
+        })
+        local not_found = invoke_and_tick(
+            cas_fake,
+            'query_character_transaction',
+            exact_query
+        )
+        assert.equal(not_found.ok, true)
+        assert.equal(not_found.value.status, 'NOT_FOUND')
+
+        local mutated_query = query_request(conflicted, {
+            context_suffix = 'query_proof_mutated',
+        })
+        mutated_query.transaction_id = 'query_proof_mutated_tx_001'
+        local mutated_rejected = invoke_and_tick(
+            cas_fake,
+            'query_character_transaction',
+            mutated_query
+        )
+        assert.error_code(mutated_rejected, 'IDEMPOTENCY_KEY_REUSED')
+        assert.deep_equal(
+            mutated_rejected.error.details,
+            query_reuse_details(mutated_query)
+        )
+        assert.equal(cas_fake:get_apply_count(conflicted.receipt_id), 0)
+
+        local seed = seed_state(
+            'character:create:query_owner_seed_receipt_001'
+        )
+        seed.level = 2
+        seed.experience = 100
+        seed.revision = 7
+        local owner_fake = FakeCharacterRepository.new({
+            players = {
+                {
+                    player_save_scope = 'player001',
+                    character_save_revision = 9,
+                    receipt_save_revision = 3,
+                    characters = { seed },
+                },
+            },
+        })
+        local reward = committed_reward_experience_request(
+            seed,
+            'character:reward:query_owner_reward_001'
+        )
+        assert.equal(invoke_and_tick(
+            owner_fake,
+            'commit_character_transaction',
+            reward
+        ).ok, true)
+        local owner_snapshot = owner_fake:get_authority_snapshot()
+
+        local function assert_query_reuse(query)
+            assert.equal(CharacterRepository:sanitize_request(
+                'query_character_transaction',
+                query
+            ).ok, true)
+            local rejected = invoke_and_tick(
+                owner_fake,
+                'query_character_transaction',
+                query
+            )
+            assert.error_code(rejected, 'IDEMPOTENCY_KEY_REUSED')
+            assert.deep_equal(
+                rejected.error.details,
+                query_reuse_details(query)
+            )
+            assert.deep_equal(
+                owner_fake:get_authority_snapshot(),
+                owner_snapshot
+            )
+        end
+
+        local forbidden_main_receipts = {
+            seed.created_receipt_id,
+            reward.result.reward_receipt_id,
+        }
+        local index
+        for index = 1, #forbidden_main_receipts do
+            local source = create_request({
+                receipt_id = forbidden_main_receipts[index],
+                transaction_id = 'query_owner_main_tx_00' .. index,
+                character_id = 'char_companion',
+                expected_character_save_revision = 10,
+                context_suffix = 'query_owner_main_' .. index,
+            })
+            assert_query_reuse(query_request(source, {
+                context_suffix = 'query_owner_main_query_' .. index,
+            }))
+        end
+
+        local cross_player_source = create_request({
+            receipt_id = seed.created_receipt_id,
+            transaction_id = 'query_owner_cross_player_tx_001',
+            character_id = 'char_companion',
+            expected_character_save_revision = 0,
+            context_suffix = 'query_owner_cross_player',
+        })
+        local cross_player = invoke_and_tick(
+            owner_fake,
+            'query_character_transaction',
+            query_request(cross_player_source, {
+                player_save_scope = 'player002',
+                context_suffix = 'query_owner_cross_player_query',
+            })
+        )
+        assert.equal(cross_player.ok, true)
+        assert.equal(cross_player.value.status, 'NOT_FOUND')
+
+        local forbidden_created_receipts = {
+            reward.receipt_id,
+            reward.result.reward_receipt_id,
+        }
+        for index = 1, #forbidden_created_receipts do
+            local forged_state = seed_state(
+                forbidden_created_receipts[index]
+            )
+            local source = rename_update_request(forged_state)
+            source.receipt_id =
+                'character:rename:query_owner_created_00' .. index
+            source.context = context(
+                'query_owner_created_' .. index,
+                source.receipt_id
+            )
+            source.transaction_id =
+                'query_owner_created_tx_00' .. index
+            assert_query_reuse(query_request(source, {
+                context_suffix = 'query_owner_created_query_' .. index,
+            }))
+        end
+
+        local valid_created_state = seed_state(seed.created_receipt_id)
+        local valid_created_source = rename_update_request(
+            valid_created_state
+        )
+        valid_created_source.receipt_id =
+            'character:rename:query_owner_valid_created_001'
+        valid_created_source.context = context(
+            'query_owner_valid_created',
+            valid_created_source.receipt_id
+        )
+        valid_created_source.transaction_id =
+            'query_owner_valid_created_tx_001'
+        local valid_created = invoke_and_tick(
+            owner_fake,
+            'query_character_transaction',
+            query_request(valid_created_source, {
+                context_suffix = 'query_owner_valid_created_query',
+            })
+        )
+        assert.equal(valid_created.ok, true)
+        assert.equal(valid_created.value.status, 'NOT_FOUND')
+    end),
+
     case('transaction queries do not cross player boundaries or accept mismatch', function()
         local fake = FakeCharacterRepository.new()
         local request = create_request({
-            receipt_id = 'character:create:isolation_receipt_001',
+            receipt_id = 'isolation_receipt_001',
         })
         assert.equal(invoke_and_tick(
             fake,
@@ -1722,6 +1980,63 @@ return {
             request.expected_character_save_revision
         )
         assert.is_nil(other_player.value.result)
+
+        local cross_type_probes = {
+            create_request({
+                receipt_id = 'isolation_probe_receipt_001',
+                transaction_id = request.receipt_id,
+                character_id = 'char_probe_1',
+                context_suffix = 'isolation_probe_1',
+            }),
+            create_request({
+                receipt_id = request.transaction_id,
+                transaction_id = 'isolation_probe_tx_002',
+                character_id = 'char_probe_2',
+                context_suffix = 'isolation_probe_2',
+            }),
+            create_request({
+                receipt_id = 'isolation_probe_receipt_003',
+                transaction_id = request.command_digest,
+                character_id = 'char_probe_3',
+                context_suffix = 'isolation_probe_3',
+            }),
+            create_request({
+                receipt_id = request.context.idempotency_key,
+                transaction_id = 'isolation_probe_tx_004',
+                character_id = 'char_probe_4',
+                context_suffix = 'isolation_probe_4',
+            }),
+        }
+        local probe_index
+        for probe_index = 1, #cross_type_probes do
+            local probe = query_request(cross_type_probes[probe_index], {
+                player_save_scope = 'player002',
+                context_suffix = 'isolation_probe_query_'
+                    .. tostring(probe_index),
+            })
+            local sanitized_probe = CharacterRepository:sanitize_request(
+                'query_character_transaction',
+                probe
+            )
+            assert.equal(
+                sanitized_probe.ok,
+                true,
+                'cross-type probe ' .. tostring(probe_index)
+                    .. ' failed sanitization: '
+                    .. tostring(
+                        sanitized_probe.error
+                            and sanitized_probe.error.details
+                            and sanitized_probe.error.details.reason
+                    )
+            )
+            local hidden = invoke_and_tick(
+                fake,
+                'query_character_transaction',
+                probe
+            )
+            assert.equal(hidden.ok, true)
+            assert.equal(hidden.value.status, 'NOT_FOUND')
+        end
 
         local altered = create_request({
             receipt_id = request.receipt_id,

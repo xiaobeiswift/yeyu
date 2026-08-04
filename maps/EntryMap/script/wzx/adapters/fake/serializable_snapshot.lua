@@ -1,7 +1,23 @@
 local Result = require "wzx.domain.common.result"
 local Sha256 = require "wzx.domain.common.sha256"
+local Ordered = require "wzx.domain.common.ordered"
 
 local SerializableSnapshot = {}
+local bytewise_string_less = Ordered.bytewise_string_less
+local get_metatable = getmetatable
+local math_floor = math.floor
+local math_huge = math.huge
+local raw_get = rawget
+local raw_next = next
+local result_err = Result.err
+local result_ok = Result.ok
+local sha256_hex = Sha256.hex
+local string_char = string.char
+local string_format = string.format
+local table_concat = table.concat
+local table_sort = table.sort
+local tostring_value = tostring
+local type_value = type
 
 local MAX_SAFE_INTEGER = 9007199254740991
 local MAX_TABLE_DEPTH = 32
@@ -12,7 +28,7 @@ local function invalid(path, reason, details)
     details = details or {}
     details.path = path
     details.reason = reason
-    return Result.err(
+    return result_err(
         "FAKE_SNAPSHOT_INVALID",
         "error.fake.snapshot_invalid",
         false,
@@ -21,15 +37,15 @@ local function invalid(path, reason, details)
 end
 
 local function is_finite_number(value)
-    return type(value) == "number"
+    return type_value(value) == "number"
         and value == value
-        and value ~= math.huge
-        and value ~= -math.huge
+        and value ~= math_huge
+        and value ~= -math_huge
 end
 
 local function is_safe_integer(value)
     return is_finite_number(value)
-        and value == math.floor(value)
+        and value == math_floor(value)
         and value >= -MAX_SAFE_INTEGER
         and value <= MAX_SAFE_INTEGER
 end
@@ -42,8 +58,8 @@ local function classify_table(value, path)
     local has_string_key = false
     local has_numeric_key = false
 
-    for key in pairs(value) do
-        key_type = type(key)
+    for key in raw_next, value do
+        key_type = type_value(key)
         if key_type == "string" then
             if key == "" then
                 return nil, invalid(path, "NON_EMPTY_STRING_MAP_KEY_REQUIRED")
@@ -85,15 +101,15 @@ end
 local function sorted_string_keys(value)
     local keys = {}
     local key
-    for key in pairs(value) do
+    for key in raw_next, value do
         keys[#keys + 1] = key
     end
-    table.sort(keys)
+    table_sort(keys, bytewise_string_less)
     return keys
 end
 
 local function copy_value(value, path, depth, active)
-    local value_type = type(value)
+    local value_type = type_value(value)
     local kind
     local kind_error
     local target
@@ -118,6 +134,9 @@ local function copy_value(value, path, depth, active)
             actual_type = value_type,
         })
     end
+    if get_metatable(value) ~= nil then
+        return nil, invalid(path, "PLAIN_TABLE_REQUIRED")
+    end
     if depth > MAX_TABLE_DEPTH then
         return nil, invalid(path, "MAXIMUM_TABLE_DEPTH_EXCEEDED", {
             maximum_table_depth = MAX_TABLE_DEPTH,
@@ -137,8 +156,8 @@ local function copy_value(value, path, depth, active)
     if kind == "ARRAY" then
         for index = 1, #value do
             child_copy, child_error = copy_value(
-                value[index],
-                path .. "[" .. tostring(index) .. "]",
+                raw_get(value, index),
+                path .. "[" .. tostring_value(index) .. "]",
                 depth + 1,
                 active
             )
@@ -152,7 +171,7 @@ local function copy_value(value, path, depth, active)
         keys = sorted_string_keys(value)
         for index = 1, #keys do
             key = keys[index]
-            child = value[key]
+            child = raw_get(value, key)
             child_copy, child_error = copy_value(
                 child,
                 path .. "." .. key,
@@ -174,10 +193,10 @@ local function u32be(value)
     if not is_safe_integer(value) or value < 0 or value > MAX_U32 then
         return nil
     end
-    return string.char(
-        math.floor(value / 16777216) % 256,
-        math.floor(value / 65536) % 256,
-        math.floor(value / 256) % 256,
+    return string_char(
+        math_floor(value / 16777216) % 256,
+        math_floor(value / 65536) % 256,
+        math_floor(value / 256) % 256,
         value % 256
     )
 end
@@ -193,7 +212,7 @@ local function append_length_prefixed(chunks, value, path)
 end
 
 local function encode_value(value, path, depth, active, chunks)
-    local value_type = type(value)
+    local value_type = type_value(value)
     local encoded
     local kind
     local kind_error
@@ -218,7 +237,7 @@ local function encode_value(value, path, depth, active, chunks)
         if value == 0 then
             encoded = "0"
         else
-            encoded = string.format("%.0f", value)
+            encoded = string_format("%.0f", value)
         end
         chunks[#chunks + 1] = "I"
         return append_length_prefixed(chunks, encoded, path)
@@ -227,6 +246,9 @@ local function encode_value(value, path, depth, active, chunks)
         return invalid(path, "SERIALIZABLE_VALUE_REQUIRED", {
             actual_type = value_type,
         })
+    end
+    if get_metatable(value) ~= nil then
+        return invalid(path, "PLAIN_TABLE_REQUIRED")
     end
     if depth > MAX_TABLE_DEPTH then
         return invalid(path, "MAXIMUM_TABLE_DEPTH_EXCEEDED", {
@@ -253,8 +275,8 @@ local function encode_value(value, path, depth, active, chunks)
         chunks[#chunks + 1] = count_bytes
         for index = 1, #value do
             found = encode_value(
-                value[index],
-                path .. "[" .. tostring(index) .. "]",
+                raw_get(value, index),
+                path .. "[" .. tostring_value(index) .. "]",
                 depth + 1,
                 active,
                 chunks
@@ -281,7 +303,7 @@ local function encode_value(value, path, depth, active, chunks)
                 return found
             end
             found = encode_value(
-                value[key],
+                raw_get(value, key),
                 path .. "." .. key,
                 depth + 1,
                 active,
@@ -306,7 +328,7 @@ function SerializableSnapshot.deep_copy(value, root_path)
     if found then
         return found
     end
-    return Result.ok(copied)
+    return result_ok(copied)
 end
 
 function SerializableSnapshot.fingerprint_request(operation_name, request)
@@ -318,10 +340,10 @@ function SerializableSnapshot.fingerprint_request(operation_name, request)
     local digest
     local digest_error
 
-    if type(operation_name) ~= "string" or operation_name == "" then
+    if type_value(operation_name) ~= "string" or operation_name == "" then
         return invalid("$operation", "NON_EMPTY_OPERATION_REQUIRED")
     end
-    if type(request) ~= "table" then
+    if type_value(request) ~= "table" or get_metatable(request) ~= nil then
         return invalid("$request", "TABLE_REQUIRED")
     end
 
@@ -330,9 +352,9 @@ function SerializableSnapshot.fingerprint_request(operation_name, request)
         return operation_error
     end
 
-    for key in pairs(request) do
+    for key in raw_next, request do
         if key ~= "context" then
-            business_fields[key] = request[key]
+            business_fields[key] = raw_get(request, key)
         end
     end
 
@@ -347,13 +369,13 @@ function SerializableSnapshot.fingerprint_request(operation_name, request)
         return encode_error
     end
 
-    digest, digest_error = Sha256.hex(table.concat(chunks))
+    digest, digest_error = sha256_hex(table_concat(chunks))
     if digest == nil then
-        return Result.err("FAKE_FINGERPRINT_FAILED", "error.fake.fingerprint_failed", false, {
+        return result_err("FAKE_FINGERPRINT_FAILED", "error.fake.fingerprint_failed", false, {
             reason = digest_error,
         })
     end
-    return Result.ok(digest)
+    return result_ok(digest)
 end
 
 SerializableSnapshot.MAX_TABLE_DEPTH = MAX_TABLE_DEPTH

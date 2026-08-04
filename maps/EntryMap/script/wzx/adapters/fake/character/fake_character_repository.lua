@@ -7,6 +7,7 @@ local FakeCharacterRepository = {}
 
 local MAX_SAFE_INTEGER = PortContract.MAX_SAFE_INTEGER
 local fingerprint_request = SerializableSnapshot.fingerprint_request
+local raw_next = next
 
 local FAULT_MODES = {
     COMMIT_THEN_UNKNOWN = true,
@@ -30,7 +31,7 @@ local UNRESOLVED_STATES = {
     RECOVERY_REQUIRED = true,
 }
 
-local function assert_plain_tree(value, path, depth, active)
+local function assert_plain_tree(value, path, depth, active, seen)
     local value_type = type(value)
     if value_type == 'string'
         or value_type == 'boolean'
@@ -49,13 +50,18 @@ local function assert_plain_tree(value, path, depth, active)
         error(path .. ' exceeds the maximum table depth', 3)
     end
     active = active or {}
+    seen = seen or {}
     if active[value] then
         error(path .. ' must not contain a table cycle', 3)
     end
+    if seen[value] then
+        error(path .. ' must not contain shared table references', 3)
+    end
+    seen[value] = true
     active[value] = true
     local key
     local child
-    key = next(value, nil)
+    key = raw_next(value, nil)
     while key ~= nil do
         if type(key) ~= 'string'
             and (type(key) ~= 'number'
@@ -70,20 +76,21 @@ local function assert_plain_tree(value, path, depth, active)
             child,
             path .. '.' .. tostring(key),
             depth + 1,
-            active
+            active,
+            seen
         )
-        key = next(value, key)
+        key = raw_next(value, key)
     end
     active[value] = nil
 end
 
 local function assert_exact_keys(value, allowed, path)
-    local key = next(value, nil)
+    local key = raw_next(value, nil)
     while key ~= nil do
         if type(key) ~= 'string' or not allowed[key] then
             error(path .. ' contains unknown field ' .. tostring(key), 3)
         end
-        key = next(value, key)
+        key = raw_next(value, key)
     end
 end
 
@@ -116,7 +123,7 @@ local function dense_array(value)
     end
     local count = 0
     local maximum = 0
-    local key = next(value, nil)
+    local key = raw_next(value, nil)
     while key ~= nil do
         if type(key) ~= 'number'
             or key ~= math.floor(key)
@@ -128,7 +135,7 @@ local function dense_array(value)
         if key > maximum then
             maximum = key
         end
-        key = next(value, key)
+        key = raw_next(value, key)
     end
     return count == maximum
 end
@@ -147,19 +154,19 @@ local function values_equal(left, right, visited)
     end
     visited[left][right] = true
 
-    local key = next(left, nil)
+    local key = raw_next(left, nil)
     while key ~= nil do
         if not values_equal(left[key], right[key], visited) then
             return false
         end
-        key = next(left, key)
+        key = raw_next(left, key)
     end
-    key = next(right, nil)
+    key = raw_next(right, nil)
     while key ~= nil do
         if left[key] == nil and right[key] ~= nil then
             return false
         end
-        key = next(right, key)
+        key = raw_next(right, key)
     end
     return true
 end
@@ -293,6 +300,24 @@ local function typed_identity_history(history, category)
     error('unsupported FakeCharacterRepository identity category')
 end
 
+local function new_typed_identity_history()
+    return {
+        receipts = {},
+        transactions = {},
+        transports = {},
+        digests = {},
+    }
+end
+
+local function scoped_typed_identity_history(histories, player_save_scope)
+    local history = histories[player_save_scope]
+    if history == nil then
+        history = new_typed_identity_history()
+        histories[player_save_scope] = history
+    end
+    return history
+end
+
 local function has_cross_typed_identity_collision(history, candidates)
     local index
     local other_index
@@ -373,10 +398,37 @@ local function has_receipt_owner_collision(history, request, is_replay)
     return false
 end
 
-local function register_receipt_owner(history, receipt_id, owner_kind)
+local function has_query_receipt_owner_collision(history, request)
+    local main_owner = history[request.receipt_id]
+    if main_owner ~= nil
+        and main_owner.player_save_scope == request.player_save_scope
+        and not main_owner.main
+    then
+        return true
+    end
+    if request.operation_type ~= 'CREATE_OWNED_CHARACTER' then
+        local created_owner = history[request.command.created_receipt_id]
+        if created_owner ~= nil
+            and created_owner.player_save_scope
+                == request.player_save_scope
+            and not created_owner.created
+        then
+            return true
+        end
+    end
+    return false
+end
+
+local function register_receipt_owner(
+    history,
+    receipt_id,
+    owner_kind,
+    player_save_scope
+)
     local owner = history[receipt_id]
     if owner == nil then
         owner = {
+            player_save_scope = player_save_scope,
             created = false,
             main = false,
             reward = false,
@@ -390,11 +442,13 @@ local function reserve_receipt_owner(
     history,
     added,
     receipt_id,
-    owner_kind
+    owner_kind,
+    player_save_scope
 )
     local owner = history[receipt_id]
     if owner == nil then
         owner = {
+            player_save_scope = player_save_scope,
             created = false,
             main = false,
             reward = false,
@@ -416,7 +470,8 @@ local function reserve_receipt_owners(history, request)
         history,
         added,
         request.receipt_id,
-        'main'
+        'main',
+        request.player_save_scope
     )
     if request.operation_type == 'CREATE_OWNED_CHARACTER'
         and request.change_type == 'INSERT'
@@ -425,7 +480,8 @@ local function reserve_receipt_owners(history, request)
             history,
             added,
             request.result.created_receipt_id,
-            'created'
+            'created',
+            request.player_save_scope
         )
     end
     if request.operation_type == 'GRANT_CHARACTER_EXPERIENCE'
@@ -435,7 +491,8 @@ local function reserve_receipt_owners(history, request)
             history,
             added,
             request.result.reward_receipt_id,
-            'reward'
+            'reward',
+            request.player_save_scope
         )
     end
     return added
@@ -488,6 +545,20 @@ local function query_identity_matches(transaction, request)
             == request.expected_character_save_revision
         and transaction.transaction_id == request.transaction_id
         and values_equal(transaction.command, request.command)
+end
+
+local function query_proof_from_commit(request)
+    return {
+        player_save_scope = request.player_save_scope,
+        receipt_id = request.receipt_id,
+        transaction_id = request.transaction_id,
+        operation_type = request.operation_type,
+        command_digest = request.command_digest,
+        result_digest = request.result_digest,
+        expected_character_save_revision =
+            request.expected_character_save_revision,
+        command = copy_or_error(request.command, '$accepted.command'),
+    }
 end
 
 local function query_identity_error_details(request)
@@ -575,7 +646,7 @@ end
 local function find_unresolved(authority, player_save_scope, receipt_id)
     local existing_receipt_id
     local transaction
-    existing_receipt_id, transaction = next(authority.receipts, nil)
+    existing_receipt_id, transaction = raw_next(authority.receipts, nil)
     while existing_receipt_id ~= nil do
         if existing_receipt_id ~= receipt_id
             and transaction.player_save_scope == player_save_scope
@@ -583,7 +654,7 @@ local function find_unresolved(authority, player_save_scope, receipt_id)
         then
             return transaction
         end
-        existing_receipt_id, transaction = next(
+        existing_receipt_id, transaction = raw_next(
             authority.receipts,
             existing_receipt_id
         )
@@ -848,24 +919,26 @@ function FakeCharacterRepository.new(options)
     local seeded_receipt_owners
     authority, seeded_receipt_owners = initialize_authority(options)
     local commit_fingerprint_by_receipt = {}
+    local commit_query_proof_by_receipt = {}
     local completion_fault_mode_by_receipt = {}
-    local typed_identity_history = {
-        receipts = {},
-        transactions = {},
-        transports = {},
-        digests = {},
-    }
+    local typed_identity_history = new_typed_identity_history()
+    local typed_identity_history_by_scope = {}
     local receipt_owner_history = {}
     local seeded_receipt_id
-    seeded_receipt_id = next(seeded_receipt_owners, nil)
+    seeded_receipt_id = raw_next(seeded_receipt_owners, nil)
     while seeded_receipt_id ~= nil do
         typed_identity_history.receipts[seeded_receipt_id] = true
+        scoped_typed_identity_history(
+            typed_identity_history_by_scope,
+            seeded_receipt_owners[seeded_receipt_id].player_save_scope
+        ).receipts[seeded_receipt_id] = true
         register_receipt_owner(
             receipt_owner_history,
             seeded_receipt_id,
-            'created'
+            'created',
+            seeded_receipt_owners[seeded_receipt_id].player_save_scope
         )
-        seeded_receipt_id = next(
+        seeded_receipt_id = raw_next(
             seeded_receipt_owners,
             seeded_receipt_id
         )
@@ -899,10 +972,10 @@ function FakeCharacterRepository.new(options)
 
     local function pending_fault_count()
         local count = 0
-        local receipt_id = next(fault_by_receipt, nil)
+        local receipt_id = raw_next(fault_by_receipt, nil)
         while receipt_id ~= nil do
             count = count + 1
-            receipt_id = next(fault_by_receipt, receipt_id)
+            receipt_id = raw_next(fault_by_receipt, receipt_id)
         end
         return count
     end
@@ -1088,8 +1161,21 @@ function FakeCharacterRepository.new(options)
 
     local function query_handler(request)
         if has_cross_typed_identity_collision(
-            typed_identity_history,
+            scoped_typed_identity_history(
+                typed_identity_history_by_scope,
+                request.player_save_scope
+            ),
             query_identity_candidates(request)
+        ) then
+            return ScriptedPort.failure(
+                'IDEMPOTENCY_KEY_REUSED',
+                query_identity_error_details(request),
+                false
+            )
+        end
+        if has_query_receipt_owner_collision(
+            receipt_owner_history,
+            request
         ) then
             return ScriptedPort.failure(
                 'IDEMPOTENCY_KEY_REUSED',
@@ -1101,6 +1187,21 @@ function FakeCharacterRepository.new(options)
         if transaction ~= nil
             and transaction.player_save_scope == request.player_save_scope
             and not query_identity_matches(transaction, request)
+        then
+            return ScriptedPort.failure(
+                'IDEMPOTENCY_KEY_REUSED',
+                query_identity_error_details(request),
+                false
+            )
+        end
+        local accepted_proof = commit_query_proof_by_receipt[
+            request.receipt_id
+        ]
+        if transaction == nil
+            and accepted_proof ~= nil
+            and accepted_proof.player_save_scope
+                == request.player_save_scope
+            and not query_identity_matches(accepted_proof, request)
         then
             return ScriptedPort.failure(
                 'IDEMPOTENCY_KEY_REUSED',
@@ -1233,9 +1334,19 @@ function FakeCharacterRepository.new(options)
         if fingerprint_was_new then
             commit_fingerprint_by_receipt[sanitized.value.receipt_id] =
                 fingerprint.value
+            commit_query_proof_by_receipt[sanitized.value.receipt_id] =
+                query_proof_from_commit(sanitized.value)
         end
         local added_typed_identities = register_typed_identities(
             typed_identity_history,
+            identity_candidates
+        )
+        local scoped_identity_history = scoped_typed_identity_history(
+            typed_identity_history_by_scope,
+            sanitized.value.player_save_scope
+        )
+        local added_scoped_typed_identities = register_typed_identities(
+            scoped_identity_history,
             identity_candidates
         )
         local added_receipt_owners = reserve_receipt_owners(
@@ -1262,10 +1373,17 @@ function FakeCharacterRepository.new(options)
                     commit_fingerprint_by_receipt[
                         sanitized.value.receipt_id
                     ] = nil
+                    commit_query_proof_by_receipt[
+                        sanitized.value.receipt_id
+                    ] = nil
                 end
                 rollback_typed_identities(
                     typed_identity_history,
                     added_typed_identities
+                )
+                rollback_typed_identities(
+                    scoped_identity_history,
+                    added_scoped_typed_identities
                 )
                 rollback_receipt_owners(
                     receipt_owner_history,
@@ -1302,10 +1420,17 @@ function FakeCharacterRepository.new(options)
                     commit_fingerprint_by_receipt[
                         sanitized.value.receipt_id
                     ] = nil
+                    commit_query_proof_by_receipt[
+                        sanitized.value.receipt_id
+                    ] = nil
                 end
                 rollback_typed_identities(
                     typed_identity_history,
                     added_typed_identities
+                )
+                rollback_typed_identities(
+                    scoped_identity_history,
+                    added_scoped_typed_identities
                 )
                 rollback_receipt_owners(
                     receipt_owner_history,
@@ -1339,11 +1464,16 @@ function FakeCharacterRepository.new(options)
         )
         if not admission.ok and fingerprint_was_new then
             commit_fingerprint_by_receipt[sanitized.value.receipt_id] = nil
+            commit_query_proof_by_receipt[sanitized.value.receipt_id] = nil
         end
         if not admission.ok then
             rollback_typed_identities(
                 typed_identity_history,
                 added_typed_identities
+            )
+            rollback_typed_identities(
+                scoped_identity_history,
+                added_scoped_typed_identities
             )
             rollback_receipt_owners(
                 receipt_owner_history,
