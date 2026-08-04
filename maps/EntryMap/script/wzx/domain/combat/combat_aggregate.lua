@@ -8,6 +8,9 @@ local CombatErrorCodes = require 'wzx.domain.combat.error_codes'
 local Rules = require 'wzx.domain.combat.rules'
 local Damage = require 'wzx.domain.combat.damage'
 local Timeline = require 'wzx.domain.combat.timeline'
+local MartialLoadoutRuntime = require 'wzx.domain.combat.martial_loadout_runtime'
+local CombatRuntime = require 'wzx.domain.effects.combat_runtime'
+local EffectExecutor = require 'wzx.domain.effects.effect_executor'
 
 local CombatAggregate = {}
 local bytewise_string_less = Ordered.bytewise_string_less
@@ -32,6 +35,9 @@ local PHASE = {
     FINISHED = 'FINISHED',
     INVALID = 'INVALID',
 }
+
+-- Forward declaration: effect bridge helpers call append_event before its body.
+local append_event
 
 local function fail(code, reason, details)
     details = details or {}
@@ -73,45 +79,10 @@ local function copy_stats(stats)
     }
 end
 
-local function copy_basic_attack(loadout)
-    local basic = raw_get(loadout, 'basic_attack')
-    if type_value(basic) ~= 'table' then
-        return {
-            move_id = 'move_basic_auto',
-            qi_cost = 0,
-            action_cooldown = 0,
-            on_hit_qi_gain = 10,
-            damage = Rules.default_damage_spec(),
-        }
-    end
-    local damage = raw_get(basic, 'damage')
-    if type_value(damage) ~= 'table' then
-        damage = Rules.default_damage_spec()
-    else
-        local defaults = Rules.default_damage_spec()
-        local merged = {}
-        local key
-        local value
-        for key, value in pairs(defaults) do
-            merged[key] = value
-        end
-        for key, value in pairs(damage) do
-            merged[key] = value
-        end
-        damage = merged
-    end
-    return {
-        move_id = raw_get(basic, 'move_id') or 'move_basic_auto',
-        qi_cost = raw_get(basic, 'qi_cost') or 0,
-        action_cooldown = raw_get(basic, 'action_cooldown') or 0,
-        on_hit_qi_gain = raw_get(basic, 'on_hit_qi_gain') or 10,
-        damage = damage,
-    }
-end
-
 local function make_actor(member)
     local stats = copy_stats(member.stats)
-    return {
+    local loadout = MartialLoadoutRuntime.normalize(member.martial_loadout or {})
+    local actor = {
         actor_id = member.actor_id,
         definition_id = member.definition_id,
         side = member.side,
@@ -142,13 +113,157 @@ local function make_actor(member)
         alive_state = 'ALIVE',
         action_count = 0,
         ai_profile_id = member.ai_profile_id,
-        basic_attack = copy_basic_attack(member.martial_loadout or {}),
+        -- Normalized martial loadout (basic_move + active_moves).
+        martial_loadout = loadout,
+        -- Legacy alias used by older call sites / diagnostics.
+        basic_attack = loadout.basic_move,
         move_cooldowns = {},
         stunned = false,
     }
+    MartialLoadoutRuntime.apply_initial_cooldowns(actor, loadout)
+    return actor
 end
 
-local function append_event(state, event_type, payload)
+local function side_order_of(side)
+    if side == 'ATTACKER' then
+        return 0
+    end
+    return 1
+end
+
+local function build_effect_runtime(state)
+    local actors = {}
+    local index
+    for index = 1, #state.actor_order do
+        local actor = state.actors[state.actor_order[index]]
+        actors[#actors + 1] = {
+            actor_id = actor.actor_id,
+            side_order = side_order_of(actor.side),
+            position = actor.position_index + 1,
+            alive = actor.alive_state == 'ALIVE',
+            hp = actor.current_hp,
+            max_hp = actor.max_hp,
+            qi = actor.current_qi,
+            max_qi = actor.max_qi,
+            effect_accuracy = actor.effect_accuracy or 0,
+            effect_resistance = actor.effect_resistance or 0,
+            immunity_tags = {},
+            control_immunity_tags = {},
+        }
+    end
+    return CombatRuntime.create({
+        combat_id = state.combat_id,
+        rules_version = state.rules_version,
+        actors = actors,
+    })
+end
+
+local function sync_effect_runtime_from_combat(state)
+    if state.effect_runtime == nil then
+        return
+    end
+    local runtime = state.effect_runtime
+    local actor_id
+    local actor
+    for actor_id, actor in raw_next, state.actors do
+        local effect_actor = runtime.actors[actor_id]
+        if effect_actor ~= nil then
+            effect_actor.hp = actor.current_hp
+            effect_actor.max_hp = actor.max_hp
+            effect_actor.qi = actor.current_qi
+            effect_actor.max_qi = actor.max_qi
+            effect_actor.alive = actor.alive_state == 'ALIVE'
+            effect_actor.effect_accuracy = actor.effect_accuracy or 0
+            effect_actor.effect_resistance = actor.effect_resistance or 0
+        end
+    end
+end
+
+local function sync_combat_from_effect_runtime(state)
+    if state.effect_runtime == nil then
+        return
+    end
+    local runtime = state.effect_runtime
+    local actor_id
+    local effect_actor
+    for actor_id, effect_actor in raw_next, runtime.actors do
+        local actor = state.actors[actor_id]
+        if actor ~= nil then
+            actor.current_qi = effect_actor.qi
+            -- HP/alive from effect DEAL_DAMAGE/HEAL; combat damage path already applied first.
+            if effect_actor.hp < actor.current_hp then
+                actor.current_hp = effect_actor.hp
+                if actor.current_hp == 0 and actor.alive_state == 'ALIVE' then
+                    actor.alive_state = 'DOWNED'
+                    append_event(state, 'ActorDowned', {
+                        actor_id = actor.actor_id,
+                        source_actor_id = nil,
+                        reason = 'EFFECT',
+                    })
+                end
+            elseif effect_actor.hp > actor.current_hp and effect_actor.alive then
+                actor.current_hp = effect_actor.hp
+            end
+            if not effect_actor.alive and actor.alive_state == 'ALIVE' and actor.current_hp == 0 then
+                actor.alive_state = 'DOWNED'
+            end
+        end
+    end
+end
+
+local function append_effect_events(state, bundle_id, source_actor_id, effect_events)
+    append_event(state, 'EffectBundleResolved', {
+        bundle_id = bundle_id,
+        source_actor_id = source_actor_id,
+        child_event_count = #effect_events,
+        child_events = effect_events,
+    })
+    local index
+    for index = 1, #effect_events do
+        local child = effect_events[index]
+        append_event(state, child.event_type, child.payload or {})
+    end
+end
+
+local function resolve_effect_bundle(state, actor, move, target_ids)
+    if move.effect_bundle_id == nil then
+        return result_ok({ applied = false, reason = 'NO_BUNDLE' })
+    end
+    if state.effect_catalog == nil or state.effect_runtime == nil then
+        -- Compatible with legacy tests: ignore bundle when catalog not injected.
+        return result_ok({ applied = false, reason = 'NO_CATALOG' })
+    end
+    sync_effect_runtime_from_combat(state)
+    local resolved = EffectExecutor.resolve_bundle({
+        catalog = state.effect_catalog,
+        runtime = state.effect_runtime,
+        bundle_id = move.effect_bundle_id,
+        prng = state.prng,
+        context = {
+            combat_id = state.combat_id,
+            source_actor_id = actor.actor_id,
+            source_definition_id = move.move_id,
+            primary_target_ids = target_ids,
+            action_index = state.action_index,
+            trigger_depth = 0,
+            rules_version = state.rules_version,
+        },
+    })
+    if not resolved.ok then
+        return resolved
+    end
+    state.effect_runtime = resolved.value.runtime
+    append_effect_events(
+        state,
+        move.effect_bundle_id,
+        actor.actor_id,
+        resolved.value.events or {}
+    )
+    sync_combat_from_effect_runtime(state)
+    return result_ok({ applied = true })
+end
+
+append_event = function(state, event_type, payload)
     local sequence = state.sequence_cursor
     state.sequence_cursor = sequence + 1
     local event = {
@@ -338,69 +453,81 @@ local function tick_cooldowns(actor, used_move_id)
     end
 end
 
-local function resolve_basic_attack(state, actor)
+local function resolve_selected_move(state, actor)
     local enemies = list_alive_enemies(state, actor.side)
     if #enemies == 0 then
         return result_ok({ skipped = true, reason = 'NO_TARGET' })
     end
     local target = enemies[1]
-    local basic = actor.basic_attack
-    local cooldown = actor.move_cooldowns[basic.move_id] or 0
-    if cooldown > 0 then
-        return result_ok({ skipped = true, reason = 'ON_COOLDOWN' })
-    end
-    if actor.current_qi < (basic.qi_cost or 0) then
-        return result_ok({ skipped = true, reason = 'QI_INSUFFICIENT' })
+    local move, reject_reason = MartialLoadoutRuntime.select_auto_move(actor)
+    if move == nil then
+        return result_ok({ skipped = true, reason = reject_reason or 'NO_MOVE' })
     end
 
-    actor.current_qi = actor.current_qi - (basic.qi_cost or 0)
+    local target_ids = { target.actor_id }
+    actor.current_qi = actor.current_qi - (move.qi_cost or 0)
     append_event(state, 'MoveSelected', {
         actor_id = actor.actor_id,
-        move_id = basic.move_id,
-        target_ids = { target.actor_id },
+        move_id = move.move_id,
+        move_type = move.move_type,
+        target_ids = target_ids,
+        qi_cost = move.qi_cost or 0,
         auto = true,
     })
 
-    local resolved = Damage.resolve_hit(actor, target, basic.damage, state.prng)
-    if not resolved.ok then
-        return resolved
-    end
-    local damage_result = resolved.value
-    append_event(state, 'DamageRequested', {
-        source_actor_id = actor.actor_id,
-        target_id = target.actor_id,
-        move_id = basic.move_id,
-        diagnostics = damage_result.diagnostics,
-    })
-    if damage_result.hit then
-        apply_damage_to_actor(
-            state,
-            target,
-            damage_result.final_damage,
-            actor.actor_id,
-            damage_result.diagnostics
-        )
-        local qi_gain = gain_qi(actor, basic.on_hit_qi_gain)
-        if qi_gain ~= 0 then
-            append_event(state, 'QiChanged', {
-                actor_id = actor.actor_id,
-                delta = qi_gain,
-                new_qi = actor.current_qi,
-                reason = 'ON_HIT',
-            })
+    -- 1) Optional combat damage path (BASIC always has damage; ACTIVE may omit).
+    if type_value(move.damage) == 'table' then
+        local resolved = Damage.resolve_hit(actor, target, move.damage, state.prng)
+        if not resolved.ok then
+            return resolved
         end
-    else
-        append_event(state, 'AttackMissed', {
+        local damage_result = resolved.value
+        append_event(state, 'DamageRequested', {
             source_actor_id = actor.actor_id,
             target_id = target.actor_id,
-            move_id = basic.move_id,
+            move_id = move.move_id,
+            diagnostics = damage_result.diagnostics,
         })
+        if damage_result.hit then
+            apply_damage_to_actor(
+                state,
+                target,
+                damage_result.final_damage,
+                actor.actor_id,
+                damage_result.diagnostics
+            )
+            local qi_gain = gain_qi(actor, move.on_hit_qi_gain)
+            if qi_gain ~= 0 then
+                append_event(state, 'QiChanged', {
+                    actor_id = actor.actor_id,
+                    delta = qi_gain,
+                    new_qi = actor.current_qi,
+                    reason = 'ON_HIT',
+                })
+            end
+        else
+            append_event(state, 'AttackMissed', {
+                source_actor_id = actor.actor_id,
+                target_id = target.actor_id,
+                move_id = move.move_id,
+            })
+        end
     end
 
-    if basic.action_cooldown > 0 then
-        actor.move_cooldowns[basic.move_id] = basic.action_cooldown
+    -- 2) Optional effect bundle (ignored cleanly when catalog not injected).
+    local effect_result = resolve_effect_bundle(state, actor, move, target_ids)
+    if not effect_result.ok then
+        return effect_result
     end
-    return result_ok({ skipped = false, move_id = basic.move_id })
+
+    if (move.action_cooldown or 0) > 0 then
+        actor.move_cooldowns[move.move_id] = move.action_cooldown
+    end
+    return result_ok({
+        skipped = false,
+        move_id = move.move_id,
+        move_type = move.move_type,
+    })
 end
 
 local function resolve_action(state, actor)
@@ -428,7 +555,7 @@ local function resolve_action(state, actor)
         return result_ok(true)
     end
 
-    local action = resolve_basic_attack(state, actor)
+    local action = resolve_selected_move(state, actor)
     if not action.ok then
         return action
     end
@@ -448,6 +575,7 @@ local function resolve_action(state, actor)
         action_index = state.action_index,
         skipped = action.value.skipped == true,
         move_id = action.value.move_id,
+        move_type = action.value.move_type,
     })
     return result_ok(true)
 end
@@ -538,13 +666,36 @@ function CombatAggregate.start(input)
         command_log = {},
         result = nil,
         auto = snapshot.control_policy == 'AUTO_ALL',
+        -- Optional effects bridge (05). Absent => effect_bundle_id ignored.
+        effect_catalog = nil,
+        effect_runtime = nil,
     }
+
+    local effect_catalog = raw_get(input, 'effect_catalog')
+    if effect_catalog ~= nil then
+        if type_value(effect_catalog) ~= 'table'
+            or type_value(effect_catalog.require_bundle) ~= 'function'
+        then
+            return invalid('EFFECT_CATALOG_INVALID')
+        end
+        local runtime_result = build_effect_runtime(state)
+        if not runtime_result.ok then
+            return fail(
+                CombatErrorCodes.COMBAT_ARGUMENT_INVALID,
+                'EFFECT_RUNTIME_CREATE_FAILED',
+                { cause = runtime_result.error }
+            )
+        end
+        state.effect_catalog = effect_catalog
+        state.effect_runtime = runtime_result.value
+    end
 
     append_event(state, 'CombatCreated', {
         combat_kind = snapshot.combat_kind,
         control_policy = snapshot.control_policy,
         seed = snapshot.seed,
         action_limit = action_limit,
+        effect_bridge = state.effect_catalog ~= nil,
     })
     append_event(state, 'CombatStarted', {
         attacker_count = #snapshot.attacker_formation.members,
