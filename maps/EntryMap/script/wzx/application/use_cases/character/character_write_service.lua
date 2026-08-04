@@ -25,6 +25,7 @@ local validate_source_reference = RuntimeId.validate_source_reference
 
 local CREATE = 'CREATE_OWNED_CHARACTER'
 local EXPERIENCE = 'GRANT_CHARACTER_EXPERIENCE'
+local RENAME = 'RENAME_PROTAGONIST'
 local ZERO_DIGEST = string.rep('0', 64)
 local NO_REWARD_RECEIPT_ID = 'none'
 local MAX_EXPERIENCE_GRANT = 1000000000
@@ -66,6 +67,17 @@ local EXPERIENCE_RESULT_FIELDS = {
     { name = 'reward_status', type = 'STRING' },
     { name = 'reward_receipt_id', type = 'STRING' },
     { name = 'reward_result_digest', type = 'STRING' },
+}
+local RENAME_COMMAND_FIELDS = {
+    { name = 'character_id', type = 'STRING' },
+    { name = 'created_receipt_id', type = 'STRING' },
+    { name = 'new_name', type = 'STRING' },
+    { name = 'expected_revision', type = 'INTEGER' },
+}
+local RENAME_RESULT_FIELDS = {
+    { name = 'character_id', type = 'STRING' },
+    { name = 'new_name', type = 'STRING' },
+    { name = 'character_revision', type = 'INTEGER' },
 }
 
 local Service = {}
@@ -815,6 +827,182 @@ function Service:grant_experience(input, invoke)
     return finalized
 end
 
+local function build_rename_commit(identity, planned, save_revision)
+    local command = {
+        character_id = planned.character_id,
+        created_receipt_id = planned.before_state.created_receipt_id,
+        new_name = planned.new_name,
+        expected_revision = planned.expected_revision,
+    }
+    local result = {
+        operation_type = RENAME,
+        character_id = planned.character_id,
+        new_name = planned.new_name,
+        character_revision = planned.after_state.revision,
+    }
+    local command_digest, command_error = digest(
+        'character_rename_protagonist_command',
+        RENAME_COMMAND_FIELDS,
+        command
+    )
+    if command_error then
+        return command_error
+    end
+    local result_digest, result_error = digest(
+        'character_rename_protagonist_result',
+        RENAME_RESULT_FIELDS,
+        {
+            character_id = result.character_id,
+            new_name = result.new_name,
+            character_revision = result.character_revision,
+        }
+    )
+    if result_error then
+        return result_error
+    end
+    return result_ok({
+        context = build_context(identity),
+        player_save_scope = identity.player_save_scope,
+        operation_type = RENAME,
+        receipt_id = identity.receipt_id,
+        transaction_id = identity.transaction_id,
+        command_digest = command_digest,
+        expected_character_save_revision = save_revision,
+        change_type = 'UPDATE',
+        command = command,
+        before_state = copy_state(planned.before_state),
+        after_state = copy_state(planned.after_state),
+        result_digest = result_digest,
+        result = result,
+    })
+end
+
+function Service:rename_protagonist(input, invoke)
+    local identity = validate_common_identity(input)
+    if not identity.ok then
+        return identity
+    end
+    identity = identity.value
+
+    local state = STATES[self]
+    if state == nil then
+        return invalid_argument('SERVICE_AUTHORITY_REQUIRED')
+    end
+
+    local loaded = load_character(self, identity, invoke)
+    if not loaded.ok then
+        return loaded
+    end
+    if loaded.value.status ~= 'FOUND' then
+        return fail('CHARACTER_NOT_OWNED', 'CHARACTER_NOT_FOUND', {
+            character_id = identity.character_id,
+            player_save_scope = identity.player_save_scope,
+            status = loaded.value.status,
+        }, false)
+    end
+
+    local planned = state.rules:plan_rename(
+        loaded.value.state,
+        raw_get(input, 'new_name')
+    )
+    if not planned.ok then
+        return planned
+    end
+
+    local commit_request = build_rename_commit(
+        identity,
+        planned.value,
+        loaded.value.character_save_revision
+    )
+    if not commit_request.ok then
+        return commit_request
+    end
+
+    local committed = invoke_port(
+        invoke,
+        'commit_character_transaction',
+        commit_request.value
+    )
+    return finalize_write(commit_request.value, committed)
+end
+
+function Service:get_character_detail(input, invoke)
+    if type_value(input) ~= 'table' or get_metatable(input) ~= nil then
+        return invalid_argument('PLAIN_TABLE_REQUIRED', { field = 'input' })
+    end
+    local scope = validate_component(
+        raw_get(input, 'player_save_scope'),
+        'player_save_scope'
+    )
+    if not scope.ok then
+        return invalid_argument('PLAYER_SAVE_SCOPE_INVALID', {
+            field = 'player_save_scope',
+        })
+    end
+    local character_id = validate_content(
+        raw_get(input, 'character_id'),
+        'char_',
+        'character_id'
+    )
+    if not character_id.ok then
+        return invalid_argument('CHARACTER_ID_INVALID', {
+            field = 'character_id',
+        })
+    end
+    local request_id = validate_component(
+        raw_get(input, 'request_id') or 'request_character_detail',
+        'request_id'
+    )
+    if not request_id.ok then
+        return invalid_argument('REQUEST_ID_INVALID', { field = 'request_id' })
+    end
+    local correlation_id = validate_component(
+        raw_get(input, 'correlation_id') or request_id.value,
+        'correlation_id'
+    )
+    if not correlation_id.ok then
+        return invalid_argument('CORRELATION_ID_INVALID', {
+            field = 'correlation_id',
+        })
+    end
+
+    local state = STATES[self]
+    if state == nil then
+        return invalid_argument('SERVICE_AUTHORITY_REQUIRED')
+    end
+
+    local identity = {
+        player_save_scope = scope.value,
+        character_id = character_id.value,
+        request_id = request_id.value,
+        correlation_id = correlation_id.value,
+        attempt = 1,
+    }
+    local loaded = load_character(self, identity, invoke)
+    if not loaded.ok then
+        return loaded
+    end
+    if loaded.value.status ~= 'FOUND' then
+        return fail('CHARACTER_NOT_OWNED', 'CHARACTER_NOT_FOUND', {
+            character_id = character_id.value,
+            player_save_scope = scope.value,
+            status = loaded.value.status,
+        }, false)
+    end
+
+    local detail = state.rules:get_detail(
+        loaded.value.state,
+        raw_get(input, 'view_context')
+    )
+    if not detail.ok then
+        return detail
+    end
+    detail.value.character_save_revision = loaded.value.character_save_revision
+    detail.value.source_revisions.character_save_revision =
+        loaded.value.character_save_revision
+    return result_ok(detail.value)
+end
+
 function Service:query_transaction(pending, invoke, context_input)
     if type_value(pending) ~= 'table'
         or get_metatable(pending) ~= nil
@@ -1039,6 +1227,8 @@ function CharacterWriteService.bind(options)
     if type_value(rules) ~= 'table'
         or type_value(rules.create_owned) ~= 'function'
         or type_value(rules.plan_experience_grant) ~= 'function'
+        or type_value(rules.plan_rename) ~= 'function'
+        or type_value(rules.get_detail) ~= 'function'
     then
         return invalid_argument('CHARACTER_RULES_REQUIRED', {
             field = 'rules',

@@ -1,23 +1,27 @@
 local Catalog = require 'wzx.config.schema.character.catalog'
 local RewardCatalog = require 'wzx.config.schema.reward.catalog'
+local Ordered = require 'wzx.domain.common.ordered'
 local Result = require 'wzx.domain.common.result'
 local RuntimeId = require 'wzx.domain.common.runtime_id'
 local CharacterAggregate = require 'wzx.domain.character.character_aggregate'
 local ErrorCodes = require 'wzx.domain.character.error_codes'
 local LevelRewardPlanDigest = require 'wzx.domain.character.level_reward_plan_digest'
 local Progression = require 'wzx.domain.character.progression'
+local StatPipeline = require 'wzx.domain.character.stat_pipeline'
 
 local CharacterRules = {}
 local error_value = error
 local set_metatable = setmetatable
 local get_metatable = getmetatable
 local is_catalog_authority = Catalog.is_authority
+local is_dense_array = Ordered.is_dense_array
 local is_reward_catalog_authority = RewardCatalog.is_authority
 local resolve_catalog_character = Catalog.resolve_character
 local validate_catalog_owned_talents = Catalog.validate_owned_talents
 local validate_level_reward = RewardCatalog.validate_as_level_reward
 local aggregate_create_owned = CharacterAggregate.create_owned
 local aggregate_grant_experience = CharacterAggregate.grant_experience
+local aggregate_rename_protagonist = CharacterAggregate.rename_protagonist
 local aggregate_validate = CharacterAggregate.validate
 local collect_level_rewards = Progression.collect_level_rewards
 local derive_level_reward_plan = LevelRewardPlanDigest.derive
@@ -223,6 +227,155 @@ function Rules:grant_experience(state, amount)
     return result_ok(planned.value.after_state)
 end
 
+function Rules:plan_rename(state, new_name)
+    local validated = validate_resolved_state(self, state)
+    if not validated.ok then
+        return validated
+    end
+    local renamed = aggregate_rename_protagonist(
+        validated.value.state,
+        validated.value.definition_facts,
+        validated.value.level_curve,
+        new_name
+    )
+    if not renamed.ok then
+        return renamed
+    end
+    return result_ok({
+        character_id = validated.value.state.character_id,
+        expected_revision = validated.value.state.revision,
+        before_state = validated.value.state,
+        after_state = renamed.value,
+        new_name = new_name,
+        role = validated.value.definition_facts.role,
+    })
+end
+
+local function collect_talent_contributions(catalog, talent_ids)
+    local contributions = {}
+    local index
+    for index = 1, #talent_ids do
+        local talent_id = talent_ids[index]
+        local talent_result = catalog:get('talent_definitions', talent_id)
+        if not talent_result.ok then
+            return talent_result
+        end
+        local talent = talent_result.value
+        local contribution_index
+        for contribution_index = 1, #talent.contributions do
+            contributions[#contributions + 1] = talent.contributions[contribution_index]
+        end
+    end
+    return result_ok(contributions)
+end
+
+function Rules:get_detail(state, view_context)
+    local validated = validate_resolved_state(self, state)
+    if not validated.ok then
+        return validated
+    end
+    local authority = authority_state(self)
+    if authority == nil or authority.catalog == nil then
+        return invalid_authority('RULES_AUTHORITY_REQUIRED')
+    end
+
+    local context_tags = {}
+    if view_context ~= nil then
+        if type_value(view_context) ~= 'table'
+            or get_metatable(view_context) ~= nil
+            or not is_dense_array(view_context)
+        then
+            return build_failure('VIEW_CONTEXT_INVALID', {
+                field = 'view_context',
+            })
+        end
+        local index
+        for index = 1, #view_context do
+            if type_value(view_context[index]) ~= 'string'
+                or view_context[index] == ''
+            then
+                return build_failure('VIEW_CONTEXT_TAG_INVALID', {
+                    field = 'view_context',
+                    index = index,
+                })
+            end
+            context_tags[index] = view_context[index]
+        end
+    end
+
+    local character_id = validated.value.state.character_id
+    local definition_result = authority.catalog:get(
+        'character_definitions',
+        character_id
+    )
+    if not definition_result.ok then
+        return definition_result
+    end
+    local definition = definition_result.value
+    local formula_result = authority.catalog:get(
+        'formula_sets',
+        definition.formula_set_id
+    )
+    if not formula_result.ok then
+        return formula_result
+    end
+
+    local contributions = collect_talent_contributions(
+        authority.catalog,
+        validated.value.state.unlocked_talent_ids
+    )
+    if not contributions.ok then
+        return contributions
+    end
+
+    local pipeline = StatPipeline.calculate({
+        level = validated.value.state.level,
+        base_primary = definition.base_primary,
+        growth_per_level_milli = definition.growth_per_level_milli,
+        formula = formula_result.value,
+        initial_qi = definition.initial_qi,
+        contributions = contributions.value,
+        context_tags = context_tags,
+    })
+    if not pipeline.ok then
+        return pipeline
+    end
+
+    local talent_ids = {}
+    local talent_index
+    for talent_index = 1, #validated.value.state.unlocked_talent_ids do
+        talent_ids[talent_index] =
+            validated.value.state.unlocked_talent_ids[talent_index]
+    end
+
+    return result_ok({
+        character_id = character_id,
+        definition_version = validated.value.state.definition_version,
+        role = definition.role,
+        level = validated.value.state.level,
+        experience = validated.value.state.experience,
+        awakening_rank = validated.value.state.awakening_rank,
+        custom_name = validated.value.state.custom_name,
+        unlocked_talent_ids = talent_ids,
+        created_receipt_id = validated.value.state.created_receipt_id,
+        revision = validated.value.state.revision,
+        character_save_revision = nil,
+        display_name_key = definition.display_name_key,
+        primary_attributes = pipeline.value.primary,
+        combat_stats = pipeline.value.stats,
+        breakdown = pipeline.value.breakdown,
+        diagnostics = pipeline.value.diagnostics,
+        formula_id = formula_result.value.id,
+        formula_version = formula_result.value.formula_version,
+        view_context = context_tags,
+        source_revisions = {
+            character_revision = validated.value.state.revision,
+            definition_version = definition.definition_version,
+            formula_version = formula_result.value.formula_version,
+        },
+    })
+end
+
 -- The config composition boundary binds the canonical catalogs once. This
 -- read-only pure-rules object is an internal dependency of future repository,
 -- receipt, reward, and save-aware use cases; it is not a complete write service.
@@ -237,6 +390,7 @@ function CharacterRules.bind(catalog, reward_catalog)
     end
     local rules = set_metatable({}, Rules)
     STATES[rules] = {
+        catalog = catalog,
         resolve_character = function(character_id)
             return resolve_catalog_character(catalog, character_id)
         end,

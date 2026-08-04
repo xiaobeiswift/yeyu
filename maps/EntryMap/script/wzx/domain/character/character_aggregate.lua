@@ -505,6 +505,99 @@ function CharacterAggregate.grant_experience(state, definition_facts, curve, amo
     return result_ok(updated)
 end
 
+function CharacterAggregate.rename_protagonist(
+    state,
+    definition_facts,
+    curve,
+    new_name
+)
+    local validated = validate_aggregate(state, definition_facts, curve)
+    if not validated.ok then
+        return validated
+    end
+    if definition_facts.role ~= 'PROTAGONIST' then
+        return result_err(
+            ErrorCodes.CHARACTER_RENAME_NOT_ALLOWED,
+            'error.character.rename_not_allowed',
+            false,
+            {
+                reason = 'ROLE_NOT_PROTAGONIST',
+                role = definition_facts.role,
+                character_id = definition_facts.id,
+            }
+        )
+    end
+    if type_value(new_name) ~= 'string' then
+        return result_err(
+            ErrorCodes.CHARACTER_NAME_INVALID,
+            'error.character.name_invalid',
+            false,
+            {
+                reason = 'STRING_REQUIRED',
+                field = 'new_name',
+            }
+        )
+    end
+    local valid, reason, context = utf8_is_valid(
+        new_name,
+        MAX_CUSTOM_NAME_CODEPOINTS
+    )
+    if not valid then
+        local details = {
+            reason = 'CUSTOM_NAME_INVALID',
+            field = 'new_name',
+            maximum_codepoints = MAX_CUSTOM_NAME_CODEPOINTS,
+            utf8_reason = reason,
+        }
+        if reason == 'CODEPOINT_LIMIT_EXCEEDED' then
+            details.actual_codepoints = context
+        elseif context ~= nil then
+            details.byte_index = context
+        end
+        return result_err(
+            ErrorCodes.CHARACTER_NAME_INVALID,
+            'error.character.name_invalid',
+            false,
+            details
+        )
+    end
+    if reason < 1 then
+        return result_err(
+            ErrorCodes.CHARACTER_NAME_INVALID,
+            'error.character.name_invalid',
+            false,
+            {
+                reason = 'CUSTOM_NAME_EMPTY',
+                field = 'new_name',
+            }
+        )
+    end
+
+    local current = validated.value
+    if current.custom_name == new_name then
+        return result_err(
+            ErrorCodes.CHARACTER_NAME_INVALID,
+            'error.character.name_invalid',
+            false,
+            {
+                reason = 'NAME_UNCHANGED',
+                field = 'new_name',
+            }
+        )
+    end
+    if current.revision == MAX_SAFE_INTEGER then
+        return build_failure('REVISION_INCREMENT_OVERFLOW', {
+            field = 'state.revision',
+            maximum = MAX_SAFE_INTEGER,
+        })
+    end
+
+    local updated = copy_state(current)
+    updated.custom_name = new_name
+    updated.revision = current.revision + 1
+    return result_ok(updated)
+end
+
 CharacterAggregate.MAX_CUSTOM_NAME_CODEPOINTS = MAX_CUSTOM_NAME_CODEPOINTS
 CharacterAggregate.MAX_EXPERIENCE_GRANT = MAX_EXPERIENCE_GRANT
 
