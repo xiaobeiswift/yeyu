@@ -1,4 +1,4 @@
--- System 08 slot-5 equipment operation receipts (offline enhance path).
+-- System 08 slot-5 equipment operation receipts (enhance + temper).
 -- Parallel flat rows only; no nested result objects.
 
 local Ordered = require 'wzx.domain.common.ordered'
@@ -17,6 +17,7 @@ local result_ok = Result.ok
 local table_sort = table.sort
 local type_value = type
 local validate_component = RuntimeId.validate_component
+local validate_content = RuntimeId.validate_content
 local validate_derived = RuntimeId.validate_derived
 
 local CURRENT_SCHEMA_VERSION = 1
@@ -41,6 +42,11 @@ local RECEIPT_FIELDS = {
     instance_id = true,
     from_level = true,
     to_level = true,
+    slot_index = true,
+    new_affix_id = true,
+    new_tier = true,
+    new_rolled_value = true,
+    new_roll_ordinal = true,
     copper_cost = true,
     material_item_id = true,
     material_count = true,
@@ -48,6 +54,7 @@ local RECEIPT_FIELDS = {
 }
 local OPERATION_TYPES = {
     ENHANCE_EQUIPMENT = true,
+    TEMPER_AFFIX = true,
 }
 local STATUSES = {
     COMMITTED = true,
@@ -103,6 +110,133 @@ local function is_sha256(value)
     return type_value(value) == 'string'
         and #value == 64
         and string.match(value, '^[a-f0-9]+$') ~= nil
+end
+
+local function validate_cost_fields(receipt)
+    if not is_integer(receipt.copper_cost, 0, 2000000000) then
+        return invalid('COPPER_COST_INVALID', {
+            receipt_id = receipt.receipt_id,
+        })
+    end
+    if not is_integer(receipt.material_count, 0, 9999) then
+        return invalid('MATERIAL_COUNT_INVALID', {
+            receipt_id = receipt.receipt_id,
+        })
+    end
+    if receipt.material_count > 0 then
+        if receipt.material_item_id == nil then
+            return invalid('MATERIAL_ITEM_REQUIRED', {
+                receipt_id = receipt.receipt_id,
+            })
+        end
+        local checked_item = validate_component(
+            receipt.material_item_id,
+            'material_item_id'
+        )
+        if not checked_item.ok then
+            return invalid('MATERIAL_ITEM_ID_INVALID', {
+                receipt_id = receipt.receipt_id,
+            })
+        end
+    elseif receipt.material_item_id ~= nil then
+        return invalid('MATERIAL_ITEM_FORBIDDEN_WHEN_ZERO', {
+            receipt_id = receipt.receipt_id,
+        })
+    end
+    if not is_integer(receipt.equipment_save_revision_after, 0, MAX_SAFE_INTEGER) then
+        return invalid('EQUIPMENT_SAVE_REVISION_AFTER_INVALID', {
+            receipt_id = receipt.receipt_id,
+        })
+    end
+    return nil
+end
+
+local function validate_operation_fields(receipt)
+    if receipt.operation_type == 'ENHANCE_EQUIPMENT' then
+        if receipt.slot_index ~= nil
+            or receipt.new_affix_id ~= nil
+            or receipt.new_tier ~= nil
+            or receipt.new_rolled_value ~= nil
+            or receipt.new_roll_ordinal ~= nil
+        then
+            return invalid('TEMPER_FIELDS_FORBIDDEN_ON_ENHANCE', {
+                receipt_id = receipt.receipt_id,
+            })
+        end
+        if not is_integer(receipt.from_level, 0, MAX_ENHANCEMENT)
+            or not is_integer(receipt.to_level, 0, MAX_ENHANCEMENT)
+            or receipt.to_level ~= receipt.from_level + 1
+        then
+            return invalid('LEVEL_PAIR_INVALID', {
+                receipt_id = receipt.receipt_id,
+                from_level = receipt.from_level,
+                to_level = receipt.to_level,
+            })
+        end
+        return nil
+    end
+
+    -- TEMPER_AFFIX
+    if receipt.from_level ~= nil or receipt.to_level ~= nil then
+        return invalid('ENHANCE_FIELDS_FORBIDDEN_ON_TEMPER', {
+            receipt_id = receipt.receipt_id,
+        })
+    end
+    if not is_integer(receipt.slot_index, 1, 6) then
+        return invalid('SLOT_INDEX_INVALID', {
+            receipt_id = receipt.receipt_id,
+        })
+    end
+    local affix_id = validate_content(receipt.new_affix_id, 'affix_', 'new_affix_id')
+    if not affix_id.ok then
+        return invalid('NEW_AFFIX_ID_INVALID', {
+            receipt_id = receipt.receipt_id,
+        })
+    end
+    if not is_integer(receipt.new_tier, 1, 5) then
+        return invalid('NEW_TIER_INVALID', {
+            receipt_id = receipt.receipt_id,
+        })
+    end
+    if not is_integer(receipt.new_rolled_value, -2000000000, 2000000000) then
+        return invalid('NEW_ROLLED_VALUE_INVALID', {
+            receipt_id = receipt.receipt_id,
+        })
+    end
+    if not is_integer(receipt.new_roll_ordinal, 0, MAX_SAFE_INTEGER) then
+        return invalid('NEW_ROLL_ORDINAL_INVALID', {
+            receipt_id = receipt.receipt_id,
+        })
+    end
+    return nil
+end
+
+local function normalize_row(receipt)
+    local row = {
+        receipt_id = receipt.receipt_id,
+        request_hash = receipt.request_hash,
+        result_hash = receipt.result_hash,
+        status = receipt.status,
+        operation_type = receipt.operation_type,
+        instance_id = receipt.instance_id,
+        copper_cost = receipt.copper_cost,
+        material_count = receipt.material_count,
+        equipment_save_revision_after = receipt.equipment_save_revision_after,
+    }
+    if receipt.material_item_id ~= nil then
+        row.material_item_id = receipt.material_item_id
+    end
+    if receipt.operation_type == 'ENHANCE_EQUIPMENT' then
+        row.from_level = receipt.from_level
+        row.to_level = receipt.to_level
+    else
+        row.slot_index = receipt.slot_index
+        row.new_affix_id = receipt.new_affix_id
+        row.new_tier = receipt.new_tier
+        row.new_rolled_value = receipt.new_rolled_value
+        row.new_roll_ordinal = receipt.new_roll_ordinal
+    end
+    return row
 end
 
 function EquipmentReceiptCodec.encode(snapshot)
@@ -173,69 +307,15 @@ function EquipmentReceiptCodec.encode(snapshot)
                 receipt_id = receipt.receipt_id,
             })
         end
-        if not is_integer(receipt.from_level, 0, MAX_ENHANCEMENT)
-            or not is_integer(receipt.to_level, 0, MAX_ENHANCEMENT)
-            or receipt.to_level ~= receipt.from_level + 1
-        then
-            return invalid('LEVEL_PAIR_INVALID', {
-                receipt_id = receipt.receipt_id,
-                from_level = receipt.from_level,
-                to_level = receipt.to_level,
-            })
+        err = validate_operation_fields(receipt)
+        if err ~= nil then
+            return err
         end
-        if not is_integer(receipt.copper_cost, 0, 2000000000) then
-            return invalid('COPPER_COST_INVALID', {
-                receipt_id = receipt.receipt_id,
-            })
+        err = validate_cost_fields(receipt)
+        if err ~= nil then
+            return err
         end
-        if not is_integer(receipt.material_count, 0, 9999) then
-            return invalid('MATERIAL_COUNT_INVALID', {
-                receipt_id = receipt.receipt_id,
-            })
-        end
-        if receipt.material_count > 0 then
-            if receipt.material_item_id == nil then
-                return invalid('MATERIAL_ITEM_REQUIRED', {
-                    receipt_id = receipt.receipt_id,
-                })
-            end
-            local checked_item = validate_component(
-                receipt.material_item_id,
-                'material_item_id'
-            )
-            if not checked_item.ok then
-                return invalid('MATERIAL_ITEM_ID_INVALID', {
-                    receipt_id = receipt.receipt_id,
-                })
-            end
-        elseif receipt.material_item_id ~= nil then
-            return invalid('MATERIAL_ITEM_FORBIDDEN_WHEN_ZERO', {
-                receipt_id = receipt.receipt_id,
-            })
-        end
-        if not is_integer(receipt.equipment_save_revision_after, 0, MAX_SAFE_INTEGER) then
-            return invalid('EQUIPMENT_SAVE_REVISION_AFTER_INVALID', {
-                receipt_id = receipt.receipt_id,
-            })
-        end
-
-        local row = {
-            receipt_id = receipt.receipt_id,
-            request_hash = receipt.request_hash,
-            result_hash = receipt.result_hash,
-            status = receipt.status,
-            operation_type = receipt.operation_type,
-            instance_id = receipt.instance_id,
-            from_level = receipt.from_level,
-            to_level = receipt.to_level,
-            copper_cost = receipt.copper_cost,
-            material_count = receipt.material_count,
-            equipment_save_revision_after = receipt.equipment_save_revision_after,
-        }
-        if receipt.material_item_id ~= nil then
-            row.material_item_id = receipt.material_item_id
-        end
-        receipt_rows[#receipt_rows + 1] = row
+        receipt_rows[#receipt_rows + 1] = normalize_row(receipt)
     end
 
     return result_ok({
@@ -327,67 +407,15 @@ function EquipmentReceiptCodec.decode(bundle)
                 receipt_id = row.receipt_id,
             })
         end
-        if not is_integer(row.from_level, 0, MAX_ENHANCEMENT)
-            or not is_integer(row.to_level, 0, MAX_ENHANCEMENT)
-            or row.to_level ~= row.from_level + 1
-        then
-            return invalid('LEVEL_PAIR_INVALID', {
-                receipt_id = row.receipt_id,
-            })
+        err = validate_operation_fields(row)
+        if err ~= nil then
+            return err
         end
-        if not is_integer(row.copper_cost, 0, 2000000000) then
-            return invalid('COPPER_COST_INVALID', {
-                receipt_id = row.receipt_id,
-            })
+        err = validate_cost_fields(row)
+        if err ~= nil then
+            return err
         end
-        if not is_integer(row.material_count, 0, 9999) then
-            return invalid('MATERIAL_COUNT_INVALID', {
-                receipt_id = row.receipt_id,
-            })
-        end
-        if row.material_count > 0 then
-            if row.material_item_id == nil then
-                return invalid('MATERIAL_ITEM_REQUIRED', {
-                    receipt_id = row.receipt_id,
-                })
-            end
-            local checked_item = validate_component(
-                row.material_item_id,
-                'material_item_id'
-            )
-            if not checked_item.ok then
-                return invalid('MATERIAL_ITEM_ID_INVALID', {
-                    receipt_id = row.receipt_id,
-                })
-            end
-        elseif row.material_item_id ~= nil then
-            return invalid('MATERIAL_ITEM_FORBIDDEN_WHEN_ZERO', {
-                receipt_id = row.receipt_id,
-            })
-        end
-        if not is_integer(row.equipment_save_revision_after, 0, MAX_SAFE_INTEGER) then
-            return invalid('EQUIPMENT_SAVE_REVISION_AFTER_INVALID', {
-                receipt_id = row.receipt_id,
-            })
-        end
-
-        local receipt = {
-            receipt_id = row.receipt_id,
-            request_hash = row.request_hash,
-            result_hash = row.result_hash,
-            status = row.status,
-            operation_type = row.operation_type,
-            instance_id = row.instance_id,
-            from_level = row.from_level,
-            to_level = row.to_level,
-            copper_cost = row.copper_cost,
-            material_count = row.material_count,
-            equipment_save_revision_after = row.equipment_save_revision_after,
-        }
-        if row.material_item_id ~= nil then
-            receipt.material_item_id = row.material_item_id
-        end
-        receipts[row.receipt_id] = receipt
+        receipts[row.receipt_id] = normalize_row(row)
     end
 
     return result_ok({

@@ -53,14 +53,45 @@ local function copy_receipt(receipt)
         status = receipt.status,
         operation_type = receipt.operation_type,
         instance_id = receipt.instance_id,
-        from_level = receipt.from_level,
-        to_level = receipt.to_level,
         copper_cost = receipt.copper_cost,
         material_count = receipt.material_count,
         equipment_save_revision_after = receipt.equipment_save_revision_after,
     }
     if receipt.material_item_id ~= nil then
         copied.material_item_id = receipt.material_item_id
+    end
+    if receipt.operation_type == 'ENHANCE_EQUIPMENT' then
+        copied.from_level = receipt.from_level
+        copied.to_level = receipt.to_level
+    elseif receipt.operation_type == 'TEMPER_AFFIX' then
+        copied.slot_index = receipt.slot_index
+        copied.new_affix_id = receipt.new_affix_id
+        copied.new_tier = receipt.new_tier
+        copied.new_rolled_value = receipt.new_rolled_value
+        copied.new_roll_ordinal = receipt.new_roll_ordinal
+    else
+        -- Preserve unknown operation fields for fail-closed codec import.
+        if receipt.from_level ~= nil then
+            copied.from_level = receipt.from_level
+        end
+        if receipt.to_level ~= nil then
+            copied.to_level = receipt.to_level
+        end
+        if receipt.slot_index ~= nil then
+            copied.slot_index = receipt.slot_index
+        end
+        if receipt.new_affix_id ~= nil then
+            copied.new_affix_id = receipt.new_affix_id
+        end
+        if receipt.new_tier ~= nil then
+            copied.new_tier = receipt.new_tier
+        end
+        if receipt.new_rolled_value ~= nil then
+            copied.new_rolled_value = receipt.new_rolled_value
+        end
+        if receipt.new_roll_ordinal ~= nil then
+            copied.new_roll_ordinal = receipt.new_roll_ordinal
+        end
     end
     return copied
 end

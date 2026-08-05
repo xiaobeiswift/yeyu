@@ -24,6 +24,7 @@ local SaveCoordinator = require 'wzx.application.save.save_coordinator'
 local SectionOwnerRegistry = require 'wzx.config.schema.section_owner_registry'
 local StatContribution = require 'wzx.domain.contracts.stat_contribution'
 local StatResolver = require 'wzx.domain.equipment.stat_resolver'
+local TemperPolicy = require 'wzx.domain.equipment.temper_policy'
 local TemperRule = require 'wzx.config.schema.equipment.temper_rule'
 
 local case = Harness.case
@@ -935,6 +936,171 @@ return {
         assert.equal(replay_after_hydrate.value.already_committed, true)
         copper = economy.value:get_balance('currency_copper')
         assert.equal(copper.value.balance, 400)
+    end),
+
+    case('temper policy is deterministic for fixed seed and avoids same result when possible', function()
+        local catalog = build_catalog()
+        local sword = materialize(catalog, 3, 'eqinst_sword_temper_policy', 'equip_iron_sword')
+        assert.equal(#sword.affixes >= 1, true)
+        local slot_index = sword.affixes[1].slot_index
+        local old = sword.affixes[1]
+
+        local first = TemperPolicy.temper(sword, catalog, slot_index, 42)
+        assert.equal(first.ok, true, first.error and first.error.code)
+        assert.equal(first.value.slot_index, slot_index)
+        assert.equal(first.value.new_affix.roll_ordinal, old.roll_ordinal + 1)
+        assert.equal(first.value.planned_cost.copper_cost, 50)
+        assert.equal(first.value.planned_cost.material_item_id, 'item_temper_dust')
+        assert.equal(first.value.planned_cost.material_count, 1)
+
+        local second = TemperPolicy.temper(sword, catalog, slot_index, 42)
+        assert.equal(second.ok, true)
+        assert.equal(second.value.new_affix.affix_id, first.value.new_affix.affix_id)
+        assert.equal(second.value.new_affix.tier, first.value.new_affix.tier)
+        assert.equal(second.value.new_affix.rolled_value, first.value.new_affix.rolled_value)
+
+        local missing = TemperPolicy.temper(sword, catalog, 6, 42)
+        assert.equal(missing.ok, false)
+        assert.equal(missing.error.code, 'EQUIPMENT_AFFIX_SLOT_INVALID')
+    end),
+
+    case('temper debits costs with receipt idempotency for fixed seed', function()
+        local catalog = build_catalog()
+        local currency_catalog = CurrencyCatalog.build({
+            currency_definitions = {
+                {
+                    id = 'currency_copper',
+                    schema_version = 1,
+                    category = 'SOFT',
+                    balance_cap = 100000,
+                    source_policy_id = 'currpolicy_copper_source',
+                    sink_policy_id = 'currpolicy_copper_sink',
+                    name_key = 'currency.copper.name',
+                },
+            },
+        })
+        assert.equal(currency_catalog.ok, true)
+        local reward_catalog = RewardCatalog.build({
+            reward_bundles = {
+                {
+                    id = 'reward_fund_copper',
+                    schema_version = 1,
+                    entries = {
+                        {
+                            entry_order = 1,
+                            entry_type = 'CURRENCY',
+                            target_id = 'currency_copper',
+                            quantity_min = 500,
+                            quantity_max = 500,
+                        },
+                    },
+                },
+            },
+        })
+        assert.equal(reward_catalog.ok, true)
+        local economy = EconomyService.bind({
+            currency_catalog = currency_catalog.value,
+            reward_catalog = reward_catalog.value,
+            store = FakeEconomyStore.new().value,
+        })
+        assert.equal(economy.ok, true)
+        local inventory = InventoryService.bind({
+            item_catalog = ItemCatalog.build({
+                item_definitions = {
+                    {
+                        id = 'item_temper_dust',
+                        schema_version = 1,
+                        category = 'MATERIAL',
+                        name_key = 'item.temper_dust.name',
+                        max_stack = 99,
+                        ownership_cap = 999,
+                        rarity = 'COMMON',
+                    },
+                },
+            }).value,
+            store = FakeInventoryStore.new().value,
+        })
+        assert.equal(inventory.ok, true)
+
+        local funded = economy.value:prepare_reward({
+            reward_id = 'reward_fund_copper',
+            source_type = 'QUEST',
+            source_ref = 'reward_fund_copper',
+            source_occurrence_id = 'quest_fund_temper_001',
+        })
+        assert.equal(funded.ok, true)
+        assert.equal(economy.value:grant_prepared_reward({
+            prepared = funded.value,
+            receipt_id = make_receipt_id('fund_temper_copper'),
+            purpose_type = 'QUEST_REWARD',
+            purpose_ref = 'quest_fund_temper',
+        }).ok, true)
+        assert.equal(inventory.value:grant_items({
+            grants = { { item_id = 'item_temper_dust', amount = 5 } },
+        }).ok, true)
+
+        local equip_store = FakeEquipmentStore.new()
+        assert.equal(equip_store.ok, true)
+        local service = EquipmentService.bind({
+            catalog = catalog,
+            store = equip_store.value,
+            economy_service = economy.value,
+            inventory_service = inventory.value,
+        })
+        assert.equal(service.ok, true)
+        local created = service.value:create_instance({
+            equipment_id = 'equip_iron_sword',
+            origin_type = 'LOOT',
+            origin_ref = 'battle.intro.drop',
+            creation_ordinal = 0,
+            config_version = 1,
+            seed = 88,
+            instance_id = 'eqinst_sword_temper',
+            skip_save = true,
+        })
+        assert.equal(created.ok, true, created.error and created.error.code)
+        local slot_index = created.value.instance.affixes[1].slot_index
+        local before = created.value.instance.affixes[1]
+
+        local receipt_id = make_receipt_id('temper_once')
+        local tempered = service.value:temper({
+            instance_id = 'eqinst_sword_temper',
+            slot_index = slot_index,
+            seed = 12345,
+            receipt_id = receipt_id,
+            skip_save = true,
+        })
+        assert.equal(tempered.ok, true, tempered.error and tempered.error.code)
+        assert.equal(tempered.value.already_committed, false)
+        assert.equal(tempered.value.new_affix.roll_ordinal, before.roll_ordinal + 1)
+        assert.equal(tempered.value.planned_cost.copper_cost, 50)
+        assert.equal(economy.value:get_balance('currency_copper').value.balance, 450)
+        assert.equal(inventory.value:get_count('item_temper_dust').value.count, 4)
+
+        local replay = service.value:temper({
+            instance_id = 'eqinst_sword_temper',
+            slot_index = slot_index,
+            seed = 12345,
+            receipt_id = receipt_id,
+            skip_save = true,
+        })
+        assert.equal(replay.ok, true, replay.error and replay.error.code)
+        assert.equal(replay.value.already_committed, true)
+        assert.equal(replay.value.new_affix.affix_id, tempered.value.new_affix.affix_id)
+        assert.equal(replay.value.new_affix.rolled_value, tempered.value.new_affix.rolled_value)
+        assert.equal(economy.value:get_balance('currency_copper').value.balance, 450)
+        assert.equal(inventory.value:get_count('item_temper_dust').value.count, 4)
+
+        local receipt_bundle = equip_store.value:export_receipt_bundle()
+        assert.equal(receipt_bundle.ok, true)
+        local decoded = EquipmentReceiptCodec.decode(receipt_bundle.value)
+        assert.equal(decoded.ok, true, decoded.error and decoded.error.details and decoded.error.details.reason)
+        assert.equal(decoded.value.receipts[receipt_id].operation_type, 'TEMPER_AFFIX')
+        assert.equal(decoded.value.receipts[receipt_id].slot_index, slot_index)
+        assert.equal(
+            decoded.value.receipts[receipt_id].new_affix_id,
+            tempered.value.new_affix.affix_id
+        )
     end),
 
     case('enhance rejects insufficient copper before mutating instance', function()

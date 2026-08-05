@@ -1,6 +1,6 @@
--- Offline application facade for system 08 equip/create/enhance + optional save bridge.
--- Enhance debits currency (10) and materials (09) with skip_save, then writes equipment
--- instance + slot-5 operation receipt. Not a full ADR-0002 PREPARED multi-slot saga.
+-- Offline application facade for system 08 equip/create/enhance/temper + optional save.
+-- Enhance/temper debit currency (10) and materials (09) with skip_save, then write
+-- equipment instance + slot-5 operation receipt. Not a full ADR-0002 PREPARED saga.
 
 local CanonicalReceiptHashV1 = require 'wzx.domain.common.canonical_receipt_hash_v1'
 local CharacterLoadout = require 'wzx.domain.equipment.character_loadout'
@@ -14,6 +14,7 @@ local EquipmentSaveCodec = require 'wzx.domain.equipment.equipment_save_codec'
 local InventoryService = require 'wzx.application.use_cases.inventory.inventory_service'
 local Result = require 'wzx.domain.common.result'
 local RuntimeId = require 'wzx.domain.common.runtime_id'
+local TemperPolicy = require 'wzx.domain.equipment.temper_policy'
 
 local EquipmentService = {}
 local canonical_derive = CanonicalReceiptHashV1.derive
@@ -739,6 +740,370 @@ function Service:enhance(input)
         instance = next_instance,
         from_level = applied.value.from_level,
         to_level = applied.value.to_level,
+        planned_cost = copy_planned_cost(cost),
+        equipment_save_revision = put.value.equipment_save_revision,
+        economy_spend = economy_spend,
+        inventory_consume = inventory_consume,
+        save = save.value,
+    })
+end
+
+--- Reroll one affix slot with explicit seed.
+--- Debits copper (EQUIP_TEMPER) and materials with skip_save, then commits
+--- instance + TEMPER_AFFIX receipt. Same receipt_id replays without re-roll.
+function Service:temper(input)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('SERVICE_AUTHORITY_REQUIRED')
+    end
+    if type_value(input) ~= 'table' or get_metatable(input) ~= nil then
+        return invalid('INPUT_TABLE_REQUIRED', { field = 'input' })
+    end
+
+    local receipt_id = raw_get(input, 'receipt_id')
+    local checked_receipt = validate_derived(receipt_id, 'receipt_id')
+    if not checked_receipt.ok then
+        return invalid('RECEIPT_ID_INVALID', { field = 'receipt_id' })
+    end
+
+    local instance_id = raw_get(input, 'instance_id')
+    local checked_instance_id = validate_derived(instance_id, 'instance_id')
+    if not checked_instance_id.ok then
+        return invalid('INSTANCE_ID_INVALID', { field = 'instance_id' })
+    end
+
+    local slot_index = raw_get(input, 'slot_index')
+    if not is_safe_integer(slot_index, 1, 6) then
+        return invalid('SLOT_INDEX_INVALID', { field = 'slot_index' })
+    end
+
+    local seed = raw_get(input, 'seed')
+    if not is_safe_integer(seed, 1, 2147483646) then
+        return invalid('SEED_INVALID', { field = 'seed' })
+    end
+
+    if type_value(state.store.get_receipt) ~= 'function'
+        or type_value(state.store.put_committed_receipt) ~= 'function'
+    then
+        return invalid('RECEIPT_STORE_REQUIRED', { field = 'store' })
+    end
+
+    -- Identity binds slot + seed so replay returns the original roll without
+    -- depending on live affix state after the first commit.
+    local request = canonical_derive('equipment_temper_request', {
+        { name = 'instance_id', type = 'STRING' },
+        { name = 'slot_index', type = 'INTEGER' },
+        { name = 'seed', type = 'INTEGER' },
+        { name = 'operation', type = 'STRING' },
+    }, {
+        instance_id = instance_id,
+        slot_index = slot_index,
+        seed = seed,
+        operation = 'TEMPER_ONE_SLOT',
+    })
+    if not request.ok then
+        return request
+    end
+    local request_hash = request.value.digest
+
+    local existing = state.store:get_receipt(receipt_id)
+    if not existing.ok then
+        return existing
+    end
+    if existing.value ~= nil then
+        if existing.value.request_hash ~= request_hash
+            or existing.value.instance_id ~= instance_id
+            or existing.value.operation_type ~= 'TEMPER_AFFIX'
+            or existing.value.slot_index ~= slot_index
+        then
+            return fail(
+                EquipmentErrorCodes.EQUIPMENT_RECEIPT_CONFLICT,
+                'RECEIPT_PAYLOAD_MISMATCH',
+                {
+                    receipt_id = receipt_id,
+                    expected_request_hash = existing.value.request_hash,
+                    actual_request_hash = request_hash,
+                },
+                false
+            )
+        end
+        local save = maybe_persist_save(state, input)
+        if not save.ok then
+            return save
+        end
+        return result_ok({
+            status = 'COMMITTED',
+            already_committed = true,
+            receipt_id = receipt_id,
+            request_hash = existing.value.request_hash,
+            result_hash = existing.value.result_hash,
+            instance_id = existing.value.instance_id,
+            slot_index = existing.value.slot_index,
+            new_affix = {
+                slot_index = existing.value.slot_index,
+                affix_id = existing.value.new_affix_id,
+                tier = existing.value.new_tier,
+                rolled_value = existing.value.new_rolled_value,
+                roll_ordinal = existing.value.new_roll_ordinal,
+            },
+            planned_cost = copy_planned_cost({
+                copper_cost = existing.value.copper_cost,
+                material_item_id = existing.value.material_item_id,
+                material_count = existing.value.material_count,
+                required_player_chapter = 0,
+            }),
+            equipment_save_revision =
+                existing.value.equipment_save_revision_after,
+            save = save.value,
+        })
+    end
+
+    local instance = state.store:get_instance(instance_id)
+    if not instance.ok then
+        return instance
+    end
+    instance = instance.value
+
+    if raw_get(input, 'expected_instance_revision') ~= nil
+        and raw_get(input, 'expected_instance_revision') ~= instance.instance_revision
+    then
+        return fail(
+            EquipmentErrorCodes.EQUIPMENT_REVISION_CONFLICT,
+            'INSTANCE_REVISION_MISMATCH',
+            {
+                expected = raw_get(input, 'expected_instance_revision'),
+                actual = instance.instance_revision,
+                instance_id = instance_id,
+            },
+            false
+        )
+    end
+
+    local plan = TemperPolicy.plan_temper(instance, state.catalog, slot_index)
+    if not plan.ok then
+        return plan
+    end
+    local cost = plan.value.planned_cost
+
+    if cost.copper_cost > 0 and state.economy_service == nil then
+        return fail(
+            EquipmentErrorCodes.EQUIPMENT_COST_SERVICE_REQUIRED,
+            'ECONOMY_SERVICE_REQUIRED_FOR_COPPER_COST',
+            { copper_cost = cost.copper_cost },
+            false
+        )
+    end
+    if cost.material_count > 0 and state.inventory_service == nil then
+        return fail(
+            EquipmentErrorCodes.EQUIPMENT_COST_SERVICE_REQUIRED,
+            'INVENTORY_SERVICE_REQUIRED_FOR_MATERIAL_COST',
+            {
+                material_item_id = cost.material_item_id,
+                material_count = cost.material_count,
+            },
+            false
+        )
+    end
+
+    if cost.copper_cost > 0 then
+        local balance = state.economy_service:get_balance(state.copper_currency_id)
+        if not balance.ok then
+            return balance
+        end
+        if balance.value.available < cost.copper_cost then
+            return fail(
+                'ECONOMY_CURRENCY_INSUFFICIENT',
+                'COPPER_INSUFFICIENT',
+                {
+                    currency_id = state.copper_currency_id,
+                    required = cost.copper_cost,
+                    available = balance.value.available,
+                },
+                false
+            )
+        end
+    end
+    if cost.material_count > 0 then
+        local held = state.inventory_service:get_count(cost.material_item_id)
+        if not held.ok then
+            return held
+        end
+        if held.value.count < cost.material_count then
+            return fail(
+                'INVENTORY_ITEM_INSUFFICIENT',
+                'MATERIAL_INSUFFICIENT',
+                {
+                    item_id = cost.material_item_id,
+                    required = cost.material_count,
+                    available = held.value.count,
+                },
+                false
+            )
+        end
+    end
+
+    local economy_spend = nil
+    if cost.copper_cost > 0 then
+        local economy_receipt = canonical_derive(
+            'equipment_temper_economy_spend',
+            {
+                { name = 'parent_receipt_id', type = 'STRING' },
+            },
+            { parent_receipt_id = receipt_id }
+        )
+        if not economy_receipt.ok then
+            return economy_receipt
+        end
+        local source_occurrence = canonical_derive(
+            'equipment_temper_economy_source',
+            {
+                { name = 'parent_receipt_id', type = 'STRING' },
+            },
+            { parent_receipt_id = receipt_id }
+        )
+        if not source_occurrence.ok then
+            return source_occurrence
+        end
+        local source_id = 'eqtmp_' .. string.sub(source_occurrence.value.digest, 1, 48)
+        local spent = state.economy_service:spend_resources({
+            costs = {
+                {
+                    currency_id = state.copper_currency_id,
+                    amount = cost.copper_cost,
+                },
+            },
+            purpose_type = 'EQUIP_TEMPER',
+            purpose_ref = instance_id,
+            receipt_id = economy_receipt.value.receipt_id,
+            source_occurrence_id = source_id,
+            skip_save = true,
+        })
+        if not spent.ok then
+            return spent
+        end
+        economy_spend = spent.value
+    end
+
+    local inventory_consume = nil
+    if cost.material_count > 0 then
+        local consumed = state.inventory_service:consume_items({
+            costs = {
+                {
+                    item_id = cost.material_item_id,
+                    amount = cost.material_count,
+                },
+            },
+            skip_save = true,
+        })
+        if not consumed.ok then
+            return consumed
+        end
+        inventory_consume = consumed.value
+    end
+
+    local applied = TemperPolicy.temper(
+        instance,
+        state.catalog,
+        slot_index,
+        seed
+    )
+    if not applied.ok then
+        return applied
+    end
+    local next_instance = applied.value.instance
+    local put = state.store:put_instance(next_instance)
+    if not put.ok then
+        return put
+    end
+
+    local result = canonical_derive('equipment_temper_result', {
+        { name = 'request_hash', type = 'STRING' },
+        { name = 'slot_index', type = 'INTEGER' },
+        { name = 'new_affix_id', type = 'STRING' },
+        { name = 'new_tier', type = 'INTEGER' },
+        { name = 'new_rolled_value', type = 'INTEGER' },
+        { name = 'new_roll_ordinal', type = 'INTEGER' },
+        { name = 'equipment_save_revision_after', type = 'INTEGER' },
+    }, {
+        request_hash = request_hash,
+        slot_index = slot_index,
+        new_affix_id = applied.value.new_affix.affix_id,
+        new_tier = applied.value.new_affix.tier,
+        new_rolled_value = applied.value.new_affix.rolled_value,
+        new_roll_ordinal = applied.value.new_affix.roll_ordinal,
+        equipment_save_revision_after = put.value.equipment_save_revision,
+    })
+    if not result.ok then
+        return result
+    end
+
+    local receipt_row = {
+        receipt_id = receipt_id,
+        request_hash = request_hash,
+        result_hash = result.value.digest,
+        status = 'COMMITTED',
+        operation_type = 'TEMPER_AFFIX',
+        instance_id = instance_id,
+        slot_index = slot_index,
+        new_affix_id = applied.value.new_affix.affix_id,
+        new_tier = applied.value.new_affix.tier,
+        new_rolled_value = applied.value.new_affix.rolled_value,
+        new_roll_ordinal = applied.value.new_affix.roll_ordinal,
+        copper_cost = cost.copper_cost,
+        material_count = cost.material_count,
+        equipment_save_revision_after = put.value.equipment_save_revision,
+    }
+    if cost.material_item_id ~= nil and cost.material_count > 0 then
+        receipt_row.material_item_id = cost.material_item_id
+    end
+    local stored = state.store:put_committed_receipt(receipt_row)
+    if not stored.ok then
+        return stored
+    end
+    if stored.value.already_present then
+        if stored.value.receipt ~= nil
+            and stored.value.receipt.request_hash == request_hash
+        then
+            local save = maybe_persist_save(state, input)
+            if not save.ok then
+                return save
+            end
+            return result_ok({
+                status = 'COMMITTED',
+                already_committed = true,
+                receipt_id = receipt_id,
+                request_hash = stored.value.receipt.request_hash,
+                result_hash = stored.value.receipt.result_hash,
+                instance_id = stored.value.receipt.instance_id,
+                slot_index = stored.value.receipt.slot_index,
+                planned_cost = copy_planned_cost(cost),
+                equipment_save_revision =
+                    stored.value.receipt.equipment_save_revision_after,
+                save = save.value,
+            })
+        end
+        return fail(
+            EquipmentErrorCodes.EQUIPMENT_RECEIPT_CONFLICT,
+            'RECEIPT_STORE_CONFLICT',
+            { receipt_id = receipt_id },
+            false
+        )
+    end
+
+    local save = maybe_persist_save(state, input)
+    if not save.ok then
+        return save
+    end
+    return result_ok({
+        status = 'COMMITTED',
+        already_committed = false,
+        receipt_id = receipt_id,
+        request_hash = request_hash,
+        result_hash = result.value.digest,
+        instance = next_instance,
+        slot_index = slot_index,
+        old_affix = applied.value.old_affix,
+        new_affix = applied.value.new_affix,
         planned_cost = copy_planned_cost(cost),
         equipment_save_revision = put.value.equipment_save_revision,
         economy_spend = economy_spend,

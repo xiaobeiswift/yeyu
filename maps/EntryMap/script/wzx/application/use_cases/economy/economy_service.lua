@@ -37,6 +37,7 @@ local SPEND_PURPOSE_WHITELIST = {
     SHOP_PURCHASE = true,
     CRAFT_COST = true,
     EQUIP_ENHANCE = true,
+    EQUIP_TEMPER = true,
     MARTIAL_UPGRADE = true,
     FACTION_SPEND = true,
     EXCHANGE = true,
