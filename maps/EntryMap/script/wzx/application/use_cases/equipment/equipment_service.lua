@@ -1,6 +1,8 @@
--- Offline application facade for system 08 equip/create/enhance/temper + optional save.
--- Enhance/temper debit currency (10) and materials (09) with skip_save, then write
--- equipment instance + slot-5 operation receipt. Not a full ADR-0002 PREPARED saga.
+-- Offline application facade for system 08 create/equip/unequip/enhance/temper/destroy
+-- + optional save. Enhance/temper debit currency (10) and materials (09) with
+-- skip_save, then write equipment instance + slot-5 operation receipt. Destroy
+-- removes the instance, writes a slot-4 tombstone, and records DESTROY_EQUIPMENT
+-- on slot 5. Not a full ADR-0002 PREPARED saga.
 
 local CanonicalReceiptHashV1 = require 'wzx.domain.common.canonical_receipt_hash_v1'
 local CharacterLoadout = require 'wzx.domain.equipment.character_loadout'
@@ -52,6 +54,13 @@ local function invalid(reason, details)
 end
 
 local DEFAULT_COPPER_CURRENCY = 'currency_copper'
+
+local DESTROY_REASONS = {
+    SALVAGE = true,
+    DISCARD = true,
+    ADMIN = true,
+    MIGRATION = true,
+}
 
 local function is_equipment_store(value)
     return type_value(value) == 'table'
@@ -1108,6 +1117,223 @@ function Service:temper(input)
         equipment_save_revision = put.value.equipment_save_revision,
         economy_spend = economy_spend,
         inventory_consume = inventory_consume,
+        save = save.value,
+    })
+end
+
+--- Destroy an equipment instance and record a permanent tombstone.
+--- Idempotent on receipt_id. Does not settle salvage rewards (09/10).
+function Service:destroy(input)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('SERVICE_AUTHORITY_REQUIRED')
+    end
+    if type_value(input) ~= 'table' or get_metatable(input) ~= nil then
+        return invalid('INPUT_TABLE_REQUIRED', { field = 'input' })
+    end
+
+    local receipt_id = raw_get(input, 'receipt_id')
+    local checked_receipt = validate_derived(receipt_id, 'receipt_id')
+    if not checked_receipt.ok then
+        return invalid('RECEIPT_ID_INVALID', { field = 'receipt_id' })
+    end
+
+    local instance_id = raw_get(input, 'instance_id')
+    local checked_instance_id = validate_derived(instance_id, 'instance_id')
+    if not checked_instance_id.ok then
+        return invalid('INSTANCE_ID_INVALID', { field = 'instance_id' })
+    end
+
+    local reason = raw_get(input, 'reason')
+    if DESTROY_REASONS[reason] ~= true then
+        return invalid('DESTROY_REASON_INVALID', {
+            field = 'reason',
+            reason = reason,
+        })
+    end
+
+    if type_value(state.store.get_receipt) ~= 'function'
+        or type_value(state.store.put_committed_receipt) ~= 'function'
+        or type_value(state.store.destroy_instance) ~= 'function'
+    then
+        return invalid('DESTROY_STORE_REQUIRED', { field = 'store' })
+    end
+
+    -- Request identity binds instance + reason only (not post-destroy state)
+    -- so the same receipt_id can replay after the destroy has committed.
+    local request = canonical_derive('equipment_destroy_request', {
+        { name = 'instance_id', type = 'STRING' },
+        { name = 'operation', type = 'STRING' },
+        { name = 'reason', type = 'STRING' },
+    }, {
+        instance_id = instance_id,
+        operation = 'DESTROY_EQUIPMENT',
+        reason = reason,
+    })
+    if not request.ok then
+        return request
+    end
+    local request_hash = request.value.digest
+
+    local existing = state.store:get_receipt(receipt_id)
+    if not existing.ok then
+        return existing
+    end
+    if existing.value ~= nil then
+        if existing.value.request_hash ~= request_hash
+            or existing.value.instance_id ~= instance_id
+            or existing.value.operation_type ~= 'DESTROY_EQUIPMENT'
+            or existing.value.destroy_reason ~= reason
+        then
+            return fail(
+                EquipmentErrorCodes.EQUIPMENT_RECEIPT_CONFLICT,
+                'RECEIPT_PAYLOAD_MISMATCH',
+                {
+                    receipt_id = receipt_id,
+                    expected_request_hash = existing.value.request_hash,
+                    actual_request_hash = request_hash,
+                },
+                false
+            )
+        end
+        local save = maybe_persist_save(state, input)
+        if not save.ok then
+            return save
+        end
+        return result_ok({
+            status = 'COMMITTED',
+            already_committed = true,
+            receipt_id = receipt_id,
+            request_hash = existing.value.request_hash,
+            result_hash = existing.value.result_hash,
+            instance_id = existing.value.instance_id,
+            reason = existing.value.destroy_reason,
+            destroyed_revision = nil,
+            equipment_save_revision =
+                existing.value.equipment_save_revision_after,
+            save = save.value,
+        })
+    end
+
+    local instance = state.store:get_instance(instance_id)
+    if not instance.ok then
+        if type_value(state.store.get_tombstone) == 'function' then
+            local tombstone = state.store:get_tombstone(instance_id)
+            if tombstone.ok and tombstone.value ~= nil then
+                return fail(
+                    EquipmentErrorCodes.EQUIPMENT_ALREADY_DESTROYED,
+                    'INSTANCE_ALREADY_DESTROYED',
+                    {
+                        instance_id = instance_id,
+                        destroyed_revision = tombstone.value.destroyed_revision,
+                    },
+                    false
+                )
+            end
+        end
+        return instance
+    end
+    instance = instance.value
+
+    if raw_get(input, 'expected_instance_revision') ~= nil
+        and raw_get(input, 'expected_instance_revision') ~= instance.instance_revision
+    then
+        return fail(
+            EquipmentErrorCodes.EQUIPMENT_REVISION_CONFLICT,
+            'INSTANCE_REVISION_MISMATCH',
+            {
+                expected = raw_get(input, 'expected_instance_revision'),
+                actual = instance.instance_revision,
+                instance_id = instance_id,
+            },
+            false
+        )
+    end
+
+    local destroyed_revision = instance.instance_revision or 0
+    local destroyed = state.store:destroy_instance(
+        instance_id,
+        destroyed_revision
+    )
+    if not destroyed.ok then
+        return destroyed
+    end
+
+    local result = canonical_derive('equipment_destroy_result', {
+        { name = 'request_hash', type = 'STRING' },
+        { name = 'destroyed_revision', type = 'INTEGER' },
+        { name = 'equipment_save_revision_after', type = 'INTEGER' },
+    }, {
+        request_hash = request_hash,
+        destroyed_revision = destroyed_revision,
+        equipment_save_revision_after =
+            destroyed.value.equipment_save_revision,
+    })
+    if not result.ok then
+        return result
+    end
+
+    local receipt_row = {
+        receipt_id = receipt_id,
+        request_hash = request_hash,
+        result_hash = result.value.digest,
+        status = 'COMMITTED',
+        operation_type = 'DESTROY_EQUIPMENT',
+        instance_id = instance_id,
+        destroy_reason = reason,
+        copper_cost = 0,
+        material_count = 0,
+        equipment_save_revision_after =
+            destroyed.value.equipment_save_revision,
+    }
+    local stored = state.store:put_committed_receipt(receipt_row)
+    if not stored.ok then
+        return stored
+    end
+    if stored.value.already_present then
+        if stored.value.receipt ~= nil
+            and stored.value.receipt.request_hash == request_hash
+        then
+            local save = maybe_persist_save(state, input)
+            if not save.ok then
+                return save
+            end
+            return result_ok({
+                status = 'COMMITTED',
+                already_committed = true,
+                receipt_id = receipt_id,
+                request_hash = stored.value.receipt.request_hash,
+                result_hash = stored.value.receipt.result_hash,
+                instance_id = stored.value.receipt.instance_id,
+                reason = stored.value.receipt.destroy_reason,
+                equipment_save_revision =
+                    stored.value.receipt.equipment_save_revision_after,
+                save = save.value,
+            })
+        end
+        return fail(
+            EquipmentErrorCodes.EQUIPMENT_RECEIPT_CONFLICT,
+            'RECEIPT_STORE_CONFLICT',
+            { receipt_id = receipt_id },
+            false
+        )
+    end
+
+    local save = maybe_persist_save(state, input)
+    if not save.ok then
+        return save
+    end
+    return result_ok({
+        status = 'COMMITTED',
+        already_committed = false,
+        receipt_id = receipt_id,
+        request_hash = request_hash,
+        result_hash = result.value.digest,
+        instance_id = instance_id,
+        reason = reason,
+        destroyed_revision = destroyed_revision,
+        cleared_slots = destroyed.value.cleared_slots,
+        equipment_save_revision = destroyed.value.equipment_save_revision,
         save = save.value,
     })
 end

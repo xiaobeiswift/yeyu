@@ -1,5 +1,5 @@
 -- System 08 slot-4 equipment save codec.
--- Flat parallel tables only: instances, affixes, loadouts, empty tombstones.
+-- Flat parallel tables only: instances, affixes, loadouts, tombstones.
 -- Does not store derived combat stats or engine unit handles.
 
 local Ordered = require 'wzx.domain.common.ordered'
@@ -23,6 +23,7 @@ local validate_source_reference = RuntimeId.validate_source_reference
 
 local CURRENT_SCHEMA_VERSION = 1
 local MAX_INSTANCES = 512
+local MAX_TOMBSTONES = 1024
 local MAX_AFFIXES_PER_INSTANCE = 6
 local MAX_LOADOUTS = 64
 local MAX_SAFE_INTEGER = 9007199254740991
@@ -78,6 +79,10 @@ local LOADOUT_FIELDS = {
     body_instance_id = true,
     accessory_instance_id = true,
     loadout_revision = true,
+}
+local TOMBSTONE_FIELDS = {
+    instance_id = true,
+    destroyed_revision = true,
 }
 local SNAPSHOT_FIELDS = {
     equipment_save_revision = true,
@@ -205,6 +210,17 @@ local function loadout_less(left, right)
     return bytewise_string_less(left.character_id, right.character_id)
 end
 
+local function tombstone_less(left, right)
+    return bytewise_string_less(left.instance_id, right.instance_id)
+end
+
+local function copy_tombstone(row)
+    return {
+        instance_id = row.instance_id,
+        destroyed_revision = row.destroyed_revision,
+    }
+end
+
 function EquipmentSaveCodec.encode(snapshot)
     local err = no_unknown_fields(snapshot, SNAPSHOT_FIELDS, '$')
     if err ~= nil then
@@ -236,11 +252,8 @@ function EquipmentSaveCodec.encode(snapshot)
     if #snapshot.loadouts > MAX_LOADOUTS then
         return invalid('LOADOUT_LIMIT', { count = #snapshot.loadouts })
     end
-    -- Offline V1 keeps tombstones empty until destroy path lands.
-    if #snapshot.tombstones > 0 then
-        return invalid('TOMBSTONES_UNSUPPORTED', {
-            count = #snapshot.tombstones,
-        })
+    if #snapshot.tombstones > MAX_TOMBSTONES then
+        return invalid('TOMBSTONE_LIMIT', { count = #snapshot.tombstones })
     end
 
     local instance_rows = {}
@@ -492,10 +505,51 @@ function EquipmentSaveCodec.encode(snapshot)
         }
     end
 
+    local tombstone_rows = {}
+    local seen_tombstones = {}
+    for index = 1, #snapshot.tombstones do
+        local tombstone = snapshot.tombstones[index]
+        if type_value(tombstone) ~= 'table' then
+            return invalid('TOMBSTONE_ROW_REQUIRED', {
+                field = 'tombstones[' .. tostring(index) .. ']',
+            })
+        end
+        err = no_unknown_fields(
+            tombstone,
+            TOMBSTONE_FIELDS,
+            'tombstones[' .. tostring(index) .. ']'
+        )
+        if err ~= nil then
+            return err
+        end
+        local id_check = validate_instance_id(tombstone.instance_id, 'instance_id')
+        if not id_check.ok then
+            return id_check
+        end
+        if seen_tombstones[tombstone.instance_id] then
+            return invalid('DUPLICATE_TOMBSTONE_INSTANCE_ID', {
+                instance_id = tombstone.instance_id,
+            })
+        end
+        if seen_instances[tombstone.instance_id] then
+            return invalid('TOMBSTONE_INSTANCE_STILL_ALIVE', {
+                instance_id = tombstone.instance_id,
+            })
+        end
+        seen_tombstones[tombstone.instance_id] = true
+        if not is_integer(tombstone.destroyed_revision, 0, MAX_SAFE_INTEGER) then
+            return invalid('DESTROYED_REVISION_INVALID', {
+                instance_id = tombstone.instance_id,
+            })
+        end
+        tombstone_rows[#tombstone_rows + 1] = copy_tombstone(tombstone)
+    end
+
     table_sort(instance_rows, instance_less)
     table_sort(affix_rows, affix_less)
     table_sort(locked_rows, affix_less)
     table_sort(loadout_rows, loadout_less)
+    table_sort(tombstone_rows, tombstone_less)
 
     return result_ok({
         equipment_metadata = {
@@ -506,7 +560,7 @@ function EquipmentSaveCodec.encode(snapshot)
         equipment_affix_rows = affix_rows,
         equipment_locked_affix_rows = locked_rows,
         character_loadout_rows = loadout_rows,
-        equipment_tombstone_rows = {},
+        equipment_tombstone_rows = tombstone_rows,
     })
 end
 
@@ -549,11 +603,6 @@ function EquipmentSaveCodec.decode(bundle)
             return invalid('DENSE_ARRAY_REQUIRED', { field = key })
         end
     end
-    if #bundle.equipment_tombstone_rows > 0 then
-        return invalid('TOMBSTONES_UNSUPPORTED', {
-            count = #bundle.equipment_tombstone_rows,
-        })
-    end
     if #bundle.equipment_instance_rows > MAX_INSTANCES then
         return invalid('INSTANCE_LIMIT', {
             count = #bundle.equipment_instance_rows,
@@ -562,6 +611,11 @@ function EquipmentSaveCodec.decode(bundle)
     if #bundle.character_loadout_rows > MAX_LOADOUTS then
         return invalid('LOADOUT_LIMIT', {
             count = #bundle.character_loadout_rows,
+        })
+    end
+    if #bundle.equipment_tombstone_rows > MAX_TOMBSTONES then
+        return invalid('TOMBSTONE_LIMIT', {
+            count = #bundle.equipment_tombstone_rows,
         })
     end
 
@@ -798,8 +852,44 @@ function EquipmentSaveCodec.decode(bundle)
         }
     end
 
+    local tombstones = {}
+    local seen_tombstones = {}
+    for index = 1, #bundle.equipment_tombstone_rows do
+        local row = bundle.equipment_tombstone_rows[index]
+        err = no_unknown_fields(
+            row,
+            TOMBSTONE_FIELDS,
+            'equipment_tombstone_rows[' .. tostring(index) .. ']'
+        )
+        if err ~= nil then
+            return err
+        end
+        local id_check = validate_instance_id(row.instance_id, 'instance_id')
+        if not id_check.ok then
+            return id_check
+        end
+        if seen_tombstones[row.instance_id] then
+            return invalid('DUPLICATE_TOMBSTONE_INSTANCE_ID', {
+                instance_id = row.instance_id,
+            })
+        end
+        if seen_instances[row.instance_id] then
+            return invalid('TOMBSTONE_INSTANCE_STILL_ALIVE', {
+                instance_id = row.instance_id,
+            })
+        end
+        seen_tombstones[row.instance_id] = true
+        if not is_integer(row.destroyed_revision, 0, MAX_SAFE_INTEGER) then
+            return invalid('DESTROYED_REVISION_INVALID', {
+                instance_id = row.instance_id,
+            })
+        end
+        tombstones[#tombstones + 1] = copy_tombstone(row)
+    end
+
     table_sort(instances, instance_less)
     table_sort(loadouts, loadout_less)
+    table_sort(tombstones, tombstone_less)
 
     local copied_instances = {}
     for index = 1, #instances do
@@ -809,15 +899,20 @@ function EquipmentSaveCodec.decode(bundle)
     for index = 1, #loadouts do
         copied_loadouts[index] = copy_loadout(loadouts[index])
     end
+    local copied_tombstones = {}
+    for index = 1, #tombstones do
+        copied_tombstones[index] = copy_tombstone(tombstones[index])
+    end
 
     return result_ok({
         equipment_save_revision = meta.equipment_save_revision,
         instances = copied_instances,
         loadouts = copied_loadouts,
-        tombstones = {},
+        tombstones = copied_tombstones,
     })
 end
 
 EquipmentSaveCodec.CURRENT_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
+EquipmentSaveCodec.MAX_TOMBSTONES = MAX_TOMBSTONES
 
 return EquipmentSaveCodec

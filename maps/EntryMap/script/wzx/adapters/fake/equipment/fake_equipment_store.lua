@@ -69,6 +69,8 @@ local function copy_receipt(receipt)
         copied.new_tier = receipt.new_tier
         copied.new_rolled_value = receipt.new_rolled_value
         copied.new_roll_ordinal = receipt.new_roll_ordinal
+    elseif receipt.operation_type == 'DESTROY_EQUIPMENT' then
+        copied.destroy_reason = receipt.destroy_reason
     else
         -- Preserve unknown operation fields for fail-closed codec import.
         if receipt.from_level ~= nil then
@@ -92,6 +94,19 @@ local function copy_receipt(receipt)
         if receipt.new_roll_ordinal ~= nil then
             copied.new_roll_ordinal = receipt.new_roll_ordinal
         end
+        if receipt.destroy_reason ~= nil then
+            copied.destroy_reason = receipt.destroy_reason
+        end
+    end
+    return copied
+end
+
+local function copy_tombstones_map(tombstones)
+    local copied = {}
+    local instance_id
+    local destroyed_revision
+    for instance_id, destroyed_revision in raw_next, tombstones do
+        copied[instance_id] = destroyed_revision
     end
     return copied
 end
@@ -125,11 +140,23 @@ local function snapshot_state(state)
         return bytewise_string_less(left.character_id, right.character_id)
     end)
 
+    local tombstones = {}
+    local destroyed_revision
+    for instance_id, destroyed_revision in raw_next, state.tombstones do
+        tombstones[#tombstones + 1] = {
+            instance_id = instance_id,
+            destroyed_revision = destroyed_revision,
+        }
+    end
+    table_sort(tombstones, function(left, right)
+        return bytewise_string_less(left.instance_id, right.instance_id)
+    end)
+
     return result_ok({
         equipment_save_revision = state.equipment_save_revision,
         instances = instances,
         loadouts = loadouts,
-        tombstones = {},
+        tombstones = tombstones,
     })
 end
 
@@ -153,6 +180,7 @@ function FakeEquipmentStore.new()
         receipt_revision = 0,
         instances = {},
         loadouts = {},
+        tombstones = {},
         receipts = {},
     }
     return result_ok(view)
@@ -184,18 +212,31 @@ function Store:put_instance(instance, options)
     if not copied.ok then
         return copied
     end
+    local instance_id = copied.value.instance_id
+    if state.tombstones[instance_id] ~= nil then
+        return result_err(
+            'EQUIPMENT_TOMBSTONED',
+            'error.equipment.tombstoned',
+            false,
+            {
+                reason = 'INSTANCE_TOMBSTONED',
+                instance_id = instance_id,
+                destroyed_revision = state.tombstones[instance_id],
+            }
+        )
+    end
     options = options or {}
     local bump = options.bump_save_revision
     if bump == nil then
         bump = true
     end
-    state.instances[copied.value.instance_id] = copied.value
+    state.instances[instance_id] = copied.value
     if bump == true then
         state.equipment_save_revision = state.equipment_save_revision + 1
     end
     return result_ok({
         equipment_save_revision = state.equipment_save_revision,
-        instance_id = copied.value.instance_id,
+        instance_id = instance_id,
     })
 end
 
@@ -220,6 +261,18 @@ function Store:replace_instances_and_loadouts(instances_map, loadouts_map, optio
     local instance_id
     local instance
     for instance_id, instance in raw_next, instances_map do
+        if state.tombstones[instance_id] ~= nil then
+            return result_err(
+                'EQUIPMENT_TOMBSTONED',
+                'error.equipment.tombstoned',
+                false,
+                {
+                    reason = 'INSTANCE_TOMBSTONED',
+                    instance_id = instance_id,
+                    destroyed_revision = state.tombstones[instance_id],
+                }
+            )
+        end
         local copied = copy_instance(instance)
         if not copied.ok then
             return copied
@@ -246,6 +299,119 @@ function Store:replace_instances_and_loadouts(instances_map, loadouts_map, optio
     return result_ok({
         equipment_save_revision = state.equipment_save_revision,
     })
+end
+
+--- Atomically remove an instance, write a tombstone, and clear loadout slots.
+--- destroyed_revision should be the pre-destroy instance_revision.
+function Store:destroy_instance(instance_id, destroyed_revision, options)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    if type_value(instance_id) ~= 'string' or instance_id == '' then
+        return invalid('INSTANCE_ID_REQUIRED', { field = 'instance_id' })
+    end
+    if type_value(destroyed_revision) ~= 'number'
+        or destroyed_revision ~= destroyed_revision
+        or destroyed_revision == math.huge
+        or destroyed_revision == -math.huge
+        or destroyed_revision ~= math.floor(destroyed_revision)
+        or destroyed_revision < 0
+    then
+        return invalid('DESTROYED_REVISION_INVALID', {
+            field = 'destroyed_revision',
+        })
+    end
+    if state.tombstones[instance_id] ~= nil then
+        return result_err(
+            'EQUIPMENT_ALREADY_DESTROYED',
+            'error.equipment.already_destroyed',
+            false,
+            {
+                reason = 'ALREADY_TOMBSTONED',
+                instance_id = instance_id,
+                destroyed_revision = state.tombstones[instance_id],
+            }
+        )
+    end
+    local existing = state.instances[instance_id]
+    if existing == nil then
+        return result_err(
+            'EQUIPMENT_NOT_FOUND',
+            'error.equipment.not_found',
+            false,
+            { reason = 'INSTANCE_NOT_FOUND', instance_id = instance_id }
+        )
+    end
+
+    options = options or {}
+    local bump = options.bump_save_revision
+    if bump == nil then
+        bump = true
+    end
+
+    local cleared_slots = {}
+    local character_id
+    local loadout
+    local slot_fields = {
+        'weapon_instance_id',
+        'head_instance_id',
+        'body_instance_id',
+        'accessory_instance_id',
+    }
+    for character_id, loadout in raw_next, state.loadouts do
+        local dirty = false
+        local slot_index
+        for slot_index = 1, #slot_fields do
+            local field = slot_fields[slot_index]
+            if loadout[field] == instance_id then
+                loadout[field] = nil
+                dirty = true
+                cleared_slots[#cleared_slots + 1] = {
+                    character_id = character_id,
+                    slot = field,
+                }
+            end
+        end
+        if dirty then
+            loadout.loadout_revision = (loadout.loadout_revision or 0) + 1
+        end
+    end
+
+    state.instances[instance_id] = nil
+    state.tombstones[instance_id] = destroyed_revision
+    if bump == true then
+        state.equipment_save_revision = state.equipment_save_revision + 1
+    end
+    return result_ok({
+        equipment_save_revision = state.equipment_save_revision,
+        instance_id = instance_id,
+        destroyed_revision = destroyed_revision,
+        cleared_slots = cleared_slots,
+    })
+end
+
+function Store:get_tombstone(instance_id)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local destroyed_revision = state.tombstones[instance_id]
+    if destroyed_revision == nil then
+        return result_ok(nil)
+    end
+    return result_ok({
+        instance_id = instance_id,
+        destroyed_revision = destroyed_revision,
+    })
+end
+
+function Store:get_tombstones_map()
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    return result_ok(copy_tombstones_map(state.tombstones))
 end
 
 function Store:get_loadout(character_id)
@@ -318,9 +484,15 @@ function Store:import_save_bundle(bundle)
         local loadout = decoded.value.loadouts[index]
         loadouts[loadout.character_id] = loadout
     end
+    local tombstones = {}
+    for index = 1, #decoded.value.tombstones do
+        local tombstone = decoded.value.tombstones[index]
+        tombstones[tombstone.instance_id] = tombstone.destroyed_revision
+    end
     state.equipment_save_revision = decoded.value.equipment_save_revision
     state.instances = instances
     state.loadouts = loadouts
+    state.tombstones = tombstones
     return result_ok(true)
 end
 

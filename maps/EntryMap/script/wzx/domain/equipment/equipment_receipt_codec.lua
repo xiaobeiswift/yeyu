@@ -1,4 +1,4 @@
--- System 08 slot-5 equipment operation receipts (enhance + temper).
+-- System 08 slot-5 equipment operation receipts (enhance + temper + destroy).
 -- Parallel flat rows only; no nested result objects.
 
 local Ordered = require 'wzx.domain.common.ordered'
@@ -47,6 +47,7 @@ local RECEIPT_FIELDS = {
     new_tier = true,
     new_rolled_value = true,
     new_roll_ordinal = true,
+    destroy_reason = true,
     copper_cost = true,
     material_item_id = true,
     material_count = true,
@@ -55,6 +56,13 @@ local RECEIPT_FIELDS = {
 local OPERATION_TYPES = {
     ENHANCE_EQUIPMENT = true,
     TEMPER_AFFIX = true,
+    DESTROY_EQUIPMENT = true,
+}
+local DESTROY_REASONS = {
+    SALVAGE = true,
+    DISCARD = true,
+    ADMIN = true,
+    MIGRATION = true,
 }
 local STATUSES = {
     COMMITTED = true,
@@ -151,15 +159,22 @@ local function validate_cost_fields(receipt)
     return nil
 end
 
+local function has_temper_fields(receipt)
+    return receipt.slot_index ~= nil
+        or receipt.new_affix_id ~= nil
+        or receipt.new_tier ~= nil
+        or receipt.new_rolled_value ~= nil
+        or receipt.new_roll_ordinal ~= nil
+end
+
+local function has_enhance_fields(receipt)
+    return receipt.from_level ~= nil or receipt.to_level ~= nil
+end
+
 local function validate_operation_fields(receipt)
     if receipt.operation_type == 'ENHANCE_EQUIPMENT' then
-        if receipt.slot_index ~= nil
-            or receipt.new_affix_id ~= nil
-            or receipt.new_tier ~= nil
-            or receipt.new_rolled_value ~= nil
-            or receipt.new_roll_ordinal ~= nil
-        then
-            return invalid('TEMPER_FIELDS_FORBIDDEN_ON_ENHANCE', {
+        if has_temper_fields(receipt) or receipt.destroy_reason ~= nil then
+            return invalid('NON_ENHANCE_FIELDS_FORBIDDEN', {
                 receipt_id = receipt.receipt_id,
             })
         end
@@ -176,36 +191,51 @@ local function validate_operation_fields(receipt)
         return nil
     end
 
-    -- TEMPER_AFFIX
-    if receipt.from_level ~= nil or receipt.to_level ~= nil then
-        return invalid('ENHANCE_FIELDS_FORBIDDEN_ON_TEMPER', {
+    if receipt.operation_type == 'TEMPER_AFFIX' then
+        if has_enhance_fields(receipt) or receipt.destroy_reason ~= nil then
+            return invalid('NON_TEMPER_FIELDS_FORBIDDEN', {
+                receipt_id = receipt.receipt_id,
+            })
+        end
+        if not is_integer(receipt.slot_index, 1, 6) then
+            return invalid('SLOT_INDEX_INVALID', {
+                receipt_id = receipt.receipt_id,
+            })
+        end
+        local affix_id = validate_content(receipt.new_affix_id, 'affix_', 'new_affix_id')
+        if not affix_id.ok then
+            return invalid('NEW_AFFIX_ID_INVALID', {
+                receipt_id = receipt.receipt_id,
+            })
+        end
+        if not is_integer(receipt.new_tier, 1, 5) then
+            return invalid('NEW_TIER_INVALID', {
+                receipt_id = receipt.receipt_id,
+            })
+        end
+        if not is_integer(receipt.new_rolled_value, -2000000000, 2000000000) then
+            return invalid('NEW_ROLLED_VALUE_INVALID', {
+                receipt_id = receipt.receipt_id,
+            })
+        end
+        if not is_integer(receipt.new_roll_ordinal, 0, MAX_SAFE_INTEGER) then
+            return invalid('NEW_ROLL_ORDINAL_INVALID', {
+                receipt_id = receipt.receipt_id,
+            })
+        end
+        return nil
+    end
+
+    -- DESTROY_EQUIPMENT
+    if has_enhance_fields(receipt) or has_temper_fields(receipt) then
+        return invalid('NON_DESTROY_FIELDS_FORBIDDEN', {
             receipt_id = receipt.receipt_id,
         })
     end
-    if not is_integer(receipt.slot_index, 1, 6) then
-        return invalid('SLOT_INDEX_INVALID', {
+    if DESTROY_REASONS[receipt.destroy_reason] ~= true then
+        return invalid('DESTROY_REASON_INVALID', {
             receipt_id = receipt.receipt_id,
-        })
-    end
-    local affix_id = validate_content(receipt.new_affix_id, 'affix_', 'new_affix_id')
-    if not affix_id.ok then
-        return invalid('NEW_AFFIX_ID_INVALID', {
-            receipt_id = receipt.receipt_id,
-        })
-    end
-    if not is_integer(receipt.new_tier, 1, 5) then
-        return invalid('NEW_TIER_INVALID', {
-            receipt_id = receipt.receipt_id,
-        })
-    end
-    if not is_integer(receipt.new_rolled_value, -2000000000, 2000000000) then
-        return invalid('NEW_ROLLED_VALUE_INVALID', {
-            receipt_id = receipt.receipt_id,
-        })
-    end
-    if not is_integer(receipt.new_roll_ordinal, 0, MAX_SAFE_INTEGER) then
-        return invalid('NEW_ROLL_ORDINAL_INVALID', {
-            receipt_id = receipt.receipt_id,
+            destroy_reason = receipt.destroy_reason,
         })
     end
     return nil
@@ -229,12 +259,14 @@ local function normalize_row(receipt)
     if receipt.operation_type == 'ENHANCE_EQUIPMENT' then
         row.from_level = receipt.from_level
         row.to_level = receipt.to_level
-    else
+    elseif receipt.operation_type == 'TEMPER_AFFIX' then
         row.slot_index = receipt.slot_index
         row.new_affix_id = receipt.new_affix_id
         row.new_tier = receipt.new_tier
         row.new_rolled_value = receipt.new_rolled_value
         row.new_roll_ordinal = receipt.new_roll_ordinal
+    else
+        row.destroy_reason = receipt.destroy_reason
     end
     return row
 end

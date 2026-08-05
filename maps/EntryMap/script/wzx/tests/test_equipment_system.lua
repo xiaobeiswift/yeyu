@@ -1183,4 +1183,271 @@ return {
         )
         assert.equal(inventory.value:get_count('item_enhance_stone').value.count, 5)
     end),
+
+    case('equipment save codec round-trips non-empty tombstones with stable sort', function()
+        local catalog = build_catalog()
+        local sword = materialize(catalog, 17, 'eqinst_sword_alive', 'equip_iron_sword')
+        local encoded = EquipmentSaveCodec.encode({
+            equipment_save_revision = 9,
+            instances = { sword },
+            loadouts = {},
+            tombstones = {
+                { instance_id = 'eqinst_tomb_b', destroyed_revision = 3 },
+                { instance_id = 'eqinst_tomb_a', destroyed_revision = 1 },
+            },
+        })
+        assert.equal(encoded.ok, true, encoded.error and encoded.error.details and encoded.error.details.reason)
+        assert.equal(#encoded.value.equipment_tombstone_rows, 2)
+        assert.equal(encoded.value.equipment_tombstone_rows[1].instance_id, 'eqinst_tomb_a')
+        assert.equal(encoded.value.equipment_tombstone_rows[1].destroyed_revision, 1)
+        assert.equal(encoded.value.equipment_tombstone_rows[2].instance_id, 'eqinst_tomb_b')
+        assert.equal(encoded.value.equipment_tombstone_rows[2].destroyed_revision, 3)
+
+        local decoded = EquipmentSaveCodec.decode(encoded.value)
+        assert.equal(decoded.ok, true, decoded.error and decoded.error.details and decoded.error.details.reason)
+        assert.equal(#decoded.value.tombstones, 2)
+        assert.equal(decoded.value.tombstones[1].instance_id, 'eqinst_tomb_a')
+        assert.equal(decoded.value.tombstones[1].destroyed_revision, 1)
+        assert.equal(decoded.value.tombstones[2].instance_id, 'eqinst_tomb_b')
+        assert.equal(decoded.value.tombstones[2].destroyed_revision, 3)
+        assert.equal(decoded.value.instances[1].instance_id, 'eqinst_sword_alive')
+    end),
+
+    case('equipment save codec rejects instance id that is both alive and tombstoned', function()
+        local catalog = build_catalog()
+        local sword = materialize(catalog, 18, 'eqinst_overlap', 'equip_iron_sword')
+        local encoded = EquipmentSaveCodec.encode({
+            equipment_save_revision = 1,
+            instances = { sword },
+            loadouts = {},
+            tombstones = {
+                { instance_id = 'eqinst_overlap', destroyed_revision = 0 },
+            },
+        })
+        assert.equal(encoded.ok, false)
+        assert.equal(encoded.error.details.reason, 'TOMBSTONE_INSTANCE_STILL_ALIVE')
+
+        local valid = EquipmentSaveCodec.encode({
+            equipment_save_revision = 1,
+            instances = { sword },
+            loadouts = {},
+            tombstones = {
+                { instance_id = 'eqinst_other_dead', destroyed_revision = 2 },
+            },
+        })
+        assert.equal(valid.ok, true, valid.error and valid.error.details and valid.error.details.reason)
+        -- Force-overlap on decode by rewriting tombstone rows.
+        valid.value.equipment_tombstone_rows = {
+            { instance_id = 'eqinst_overlap', destroyed_revision = 4 },
+        }
+        local decoded = EquipmentSaveCodec.decode(valid.value)
+        assert.equal(decoded.ok, false)
+        assert.equal(decoded.error.details.reason, 'TOMBSTONE_INSTANCE_STILL_ALIVE')
+    end),
+
+    case('destroy removes instance writes tombstone and rejects resurrection', function()
+        local catalog = build_catalog()
+        local store = FakeEquipmentStore.new()
+        assert.equal(store.ok, true)
+        local service = EquipmentService.bind({
+            catalog = catalog,
+            store = store.value,
+        })
+        assert.equal(service.ok, true)
+
+        local created = service.value:create_instance({
+            equipment_id = 'equip_iron_sword',
+            origin_type = 'LOOT',
+            origin_ref = 'battle.intro.drop',
+            creation_ordinal = 0,
+            config_version = 1,
+            seed = 21,
+            instance_id = 'eqinst_sword_destroy',
+            skip_save = true,
+        })
+        assert.equal(created.ok, true, created.error and created.error.code)
+        local before_rev = created.value.instance.instance_revision
+        local save_before = store.value:get_save_revision()
+        assert.equal(save_before.ok, true)
+
+        local receipt_id = make_receipt_id('destroy_once')
+        local destroyed = service.value:destroy({
+            instance_id = 'eqinst_sword_destroy',
+            receipt_id = receipt_id,
+            reason = 'DISCARD',
+            expected_instance_revision = before_rev,
+            skip_save = true,
+        })
+        assert.equal(destroyed.ok, true, destroyed.error and destroyed.error.code)
+        assert.equal(destroyed.value.already_committed, false)
+        assert.equal(destroyed.value.reason, 'DISCARD')
+        assert.equal(destroyed.value.destroyed_revision, before_rev)
+        assert.equal(
+            destroyed.value.equipment_save_revision,
+            save_before.value + 1
+        )
+
+        local gone = service.value:get_instance('eqinst_sword_destroy')
+        assert.equal(gone.ok, false)
+        assert.equal(gone.error.code, 'EQUIPMENT_NOT_FOUND')
+
+        local tombstone = store.value:get_tombstone('eqinst_sword_destroy')
+        assert.equal(tombstone.ok, true)
+        assert.equal(tombstone.value ~= nil, true)
+        assert.equal(tombstone.value.destroyed_revision, before_rev)
+
+        local resurrect = service.value:create_instance({
+            equipment_id = 'equip_iron_sword',
+            origin_type = 'LOOT',
+            origin_ref = 'battle.intro.drop',
+            creation_ordinal = 1,
+            config_version = 1,
+            seed = 22,
+            instance_id = 'eqinst_sword_destroy',
+            skip_save = true,
+        })
+        assert.equal(resurrect.ok, false)
+        assert.equal(resurrect.error.code, 'EQUIPMENT_TOMBSTONED')
+
+        local put_again = store.value:put_instance(created.value.instance)
+        assert.equal(put_again.ok, false)
+        assert.equal(put_again.error.code, 'EQUIPMENT_TOMBSTONED')
+
+        local replay = service.value:destroy({
+            instance_id = 'eqinst_sword_destroy',
+            receipt_id = receipt_id,
+            reason = 'DISCARD',
+            skip_save = true,
+        })
+        assert.equal(replay.ok, true, replay.error and replay.error.code)
+        assert.equal(replay.value.already_committed, true)
+        assert.equal(
+            replay.value.equipment_save_revision,
+            destroyed.value.equipment_save_revision
+        )
+        assert.equal(
+            store.value:get_save_revision().value,
+            destroyed.value.equipment_save_revision
+        )
+
+        local second_destroy = service.value:destroy({
+            instance_id = 'eqinst_sword_destroy',
+            receipt_id = make_receipt_id('destroy_twice'),
+            reason = 'SALVAGE',
+            skip_save = true,
+        })
+        assert.equal(second_destroy.ok, false)
+        assert.equal(second_destroy.error.code, 'EQUIPMENT_ALREADY_DESTROYED')
+
+        local receipt_bundle = store.value:export_receipt_bundle()
+        assert.equal(receipt_bundle.ok, true)
+        local decoded_receipts = EquipmentReceiptCodec.decode(receipt_bundle.value)
+        assert.equal(decoded_receipts.ok, true)
+        assert.equal(
+            decoded_receipts.value.receipts[receipt_id].operation_type,
+            'DESTROY_EQUIPMENT'
+        )
+        assert.equal(
+            decoded_receipts.value.receipts[receipt_id].destroy_reason,
+            'DISCARD'
+        )
+        assert.equal(decoded_receipts.value.receipts[receipt_id].copper_cost, 0)
+        assert.equal(decoded_receipts.value.receipts[receipt_id].material_count, 0)
+    end),
+
+    case('destroy equipped instance clears loadout and survives save bundle import', function()
+        local catalog = build_catalog()
+        local store = FakeEquipmentStore.new()
+        assert.equal(store.ok, true)
+        local service = EquipmentService.bind({
+            catalog = catalog,
+            store = store.value,
+        })
+        assert.equal(service.ok, true)
+
+        assert.equal(service.value:create_instance({
+            equipment_id = 'equip_iron_sword',
+            origin_type = 'LOOT',
+            origin_ref = 'battle.intro.drop',
+            creation_ordinal = 0,
+            config_version = 1,
+            seed = 33,
+            instance_id = 'eqinst_sword_equipped_destroy',
+            skip_save = true,
+        }).ok, true)
+
+        local equipped = service.value:equip({
+            character_id = 'char_hero',
+            instance_id = 'eqinst_sword_equipped_destroy',
+            character_context = {
+                character_level = 10,
+                weapon_route = 'SWORD',
+                character_tags = {},
+            },
+            skip_save = true,
+        })
+        assert.equal(equipped.ok, true, equipped.error and equipped.error.code)
+        local loadout_before = service.value:get_loadout('char_hero')
+        assert.equal(loadout_before.ok, true)
+        assert.equal(
+            loadout_before.value.weapon_instance_id,
+            'eqinst_sword_equipped_destroy'
+        )
+        local loadout_rev_before = loadout_before.value.loadout_revision
+
+        local receipt_id = make_receipt_id('destroy_equipped')
+        local destroyed = service.value:destroy({
+            instance_id = 'eqinst_sword_equipped_destroy',
+            receipt_id = receipt_id,
+            reason = 'SALVAGE',
+            skip_save = true,
+        })
+        assert.equal(destroyed.ok, true, destroyed.error and destroyed.error.code)
+        assert.equal(#destroyed.value.cleared_slots >= 1, true)
+
+        local loadout_after = service.value:get_loadout('char_hero')
+        assert.equal(loadout_after.ok, true)
+        assert.equal(loadout_after.value.weapon_instance_id, nil)
+        assert.equal(
+            loadout_after.value.loadout_revision,
+            loadout_rev_before + 1
+        )
+
+        local exported = store.value:export_save_bundle()
+        assert.equal(exported.ok, true)
+        assert.equal(#exported.value.equipment_tombstone_rows, 1)
+        assert.equal(
+            exported.value.equipment_tombstone_rows[1].instance_id,
+            'eqinst_sword_equipped_destroy'
+        )
+
+        local fresh = FakeEquipmentStore.new()
+        assert.equal(fresh.ok, true)
+        local imported = fresh.value:import_save_bundle(exported.value)
+        assert.equal(imported.ok, true)
+        local tombstone = fresh.value:get_tombstone('eqinst_sword_equipped_destroy')
+        assert.equal(tombstone.ok, true)
+        assert.equal(tombstone.value ~= nil, true)
+        assert.equal(
+            fresh.value:get_instance('eqinst_sword_equipped_destroy').ok,
+            false
+        )
+        local fresh_loadout = fresh.value:get_loadout('char_hero')
+        assert.equal(fresh_loadout.ok, true)
+        assert.equal(fresh_loadout.value.weapon_instance_id, nil)
+
+        local resurrect = fresh.value:put_instance({
+            instance_id = 'eqinst_sword_equipped_destroy',
+            equipment_id = 'equip_iron_sword',
+            enhancement_level = 0,
+            affixes = {},
+            locked_affix_slots = {},
+            origin_type = 'LOOT',
+            origin_ref = 'battle.intro.drop',
+            roll_seed_hash = string.rep('a', 64),
+            instance_revision = 0,
+        })
+        assert.equal(resurrect.ok, false)
+        assert.equal(resurrect.error.code, 'EQUIPMENT_TOMBSTONED')
+    end),
 }
