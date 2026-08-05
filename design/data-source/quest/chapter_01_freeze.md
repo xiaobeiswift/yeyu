@@ -11,10 +11,10 @@
 | 2 | quest_main_02_road_silencing | 驿道灭口 | AUTO_EVENT | 01 | 4 | reward_main_02 |
 | 3 | quest_main_03_mist_and_wood | 雾病与黑木 | AUTO_EVENT | 02 | 2 | reward_main_03 |
 | 4 | quest_main_04_no_bandits | 岭上没有匪 | AUTO_EVENT | 03 | 2 | reward_main_04 |
-| 5 | quest_main_05_proof_taker | 夺证之人 | AUTO_EVENT | 04 | 2 | reward_main_05 |
+| 5 | quest_main_05_proof_taker | 夺证之人 | AUTO_EVENT | 04 | 3 | reward_main_05 |
 | 6 | quest_main_06_midnight_bell | 子夜旧钟 | AUTO_EVENT | 05 | 2 | reward_main_06 |
-| 7 | quest_main_07_proof_under_bell | 钟下遗证 | AUTO_EVENT | 06 | 2 | reward_main_07 |
-| 8 | quest_main_08_last_warden | 守院人 | AUTO_EVENT | 07 | 1 | reward_main_08 |
+| 7 | quest_main_07_proof_under_bell | 钟下遗证 | AUTO_EVENT | 06 | 3 | reward_main_07 |
+| 8 | quest_main_08_last_warden | 守院人 | AUTO_EVENT | 07 | 3 | reward_main_08 |
 | 9 | quest_main_09_who_holds_proof | 证物交谁 | MANUAL_NPC 驿丞 | 08 | 1 | reward_main_09 |
 
 主线 `abandon_policy=DENY`，`failure_policy=NO_FAIL`，`reward_policy=AUTO_ON_COMPLETE`（卷末 09 可用 TURN_IN 语义由对话分支表达，奖励仍 AUTO 简化）。
@@ -34,7 +34,7 @@
 
 | 类型前缀 | 示例 ID |
 |---|---|
-| dialogue_ | dialogue_main_01_post_hire, dialogue_main_02_ambush_arrive, dialogue_main_02_ambush_site, dialogue_main_05_ke_confront, dialogue_main_09_proof_choice |
+| dialogue_ | dialogue_main_01_post_hire, dialogue_main_02_ambush_arrive, dialogue_main_02_ambush_site, dialogue_main_05_ke_confront, dialogue_main_05_aftermath, dialogue_main_07_proof_under_bell, dialogue_main_08_meng_confront, dialogue_main_08_meng_aftermath, dialogue_main_09_proof_choice |
 | encounter_ | encounter_main_02_road_ambush, encounter_main_05_ke_lishan, encounter_main_08_meng_jiansheng |
 | location_ | location_mist_ferry_hall, location_road_ambush, location_blackwood_gate, location_sunken_bell_court, location_bell_cavern |
 | interact_ | interact_ambush_search, interact_ridge_kiln, interact_ridge_stele, interact_cavern_nameplate, interact_side_bell, interact_side_hidden_stele |

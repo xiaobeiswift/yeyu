@@ -138,6 +138,122 @@ return {
         assert.equal(talk_site.value.target_id, 'dialogue_main_02_ambush_site')
     end),
 
+    case('main 05 aftermath has wounded custody choices', function()
+        local sealed = DialogueChapter01.seal()
+        assert.equal(sealed.ok, true, reason_of(sealed))
+        local choices = sealed.value:list_choices_for_set(
+            'dialogue_main_05_aftermath',
+            'choiceset_main_05_wounded'
+        )
+        assert.equal(choices.ok, true, reason_of(choices))
+        assert.equal(#choices.value, 3)
+        assert.equal(choices.value[1].choice_memory_value, 'official')
+        assert.equal(choices.value[2].choice_memory_value, 'relay')
+        assert.equal(choices.value[3].choice_memory_value, 'huo')
+        local q = QuestChapter01.seal()
+        assert.equal(q.ok, true, reason_of(q))
+        local quest = q.value:require_quest('quest_main_05_proof_taker')
+        assert.equal(#quest.value.stage_ids, 3)
+        local aft = q.value:require_objective('objective_main_05_talk_aftermath')
+        assert.equal(aft.value.target_id, 'dialogue_main_05_aftermath')
+    end),
+
+    case('main 07 proof graph has two choice sets and quest debrief', function()
+        local sealed = DialogueChapter01.seal()
+        assert.equal(sealed.ok, true, reason_of(sealed))
+        local plate = sealed.value:list_choices_for_set(
+            'dialogue_main_07_proof_under_bell',
+            'choiceset_main_07_plate'
+        )
+        local token = sealed.value:list_choices_for_set(
+            'dialogue_main_07_proof_under_bell',
+            'choiceset_main_07_token'
+        )
+        assert.equal(plate.ok, true, reason_of(plate))
+        assert.equal(token.ok, true, reason_of(token))
+        assert.equal(#plate.value, 3)
+        assert.equal(#token.value, 3)
+        local q = QuestChapter01.seal()
+        local talk = q.value:require_objective('objective_main_07_talk_proof')
+        assert.equal(talk.ok, true)
+        assert.equal(talk.value.target_id, 'dialogue_main_07_proof_under_bell')
+    end),
+
+    case('main 08 confront and aftermath graphs wire into quest', function()
+        local sealed = DialogueChapter01.seal()
+        assert.equal(sealed.ok, true, reason_of(sealed))
+        local con = sealed.value:require_dialogue('dialogue_main_08_meng_confront')
+        local aft = sealed.value:require_dialogue('dialogue_main_08_meng_aftermath')
+        assert.equal(con.ok, true, reason_of(con))
+        assert.equal(aft.ok, true, reason_of(aft))
+        local prefight = sealed.value:list_choices_for_set(
+            'dialogue_main_08_meng_confront',
+            'choiceset_main_08_prefight'
+        )
+        assert.equal(#prefight.value, 3)
+        local q = QuestChapter01.seal()
+        local quest = q.value:require_quest('quest_main_08_last_warden')
+        assert.equal(#quest.value.stage_ids, 3)
+        assert.equal(quest.value.first_stage_id, 'stage_main_08_confront')
+        local o1 = q.value:require_objective('objective_main_08_confront')
+        local o2 = q.value:require_objective('objective_main_08_talk_aftermath')
+        assert.equal(o1.value.target_id, 'dialogue_main_08_meng_confront')
+        assert.equal(o2.value.target_id, 'dialogue_main_08_meng_aftermath')
+    end),
+
+    case('main 05 aftermath session can choose official custody', function()
+        local sealed = DialogueChapter01.seal()
+        assert.equal(sealed.ok, true, reason_of(sealed))
+        local facts = DialogueSession.empty()
+        local started = DialogueSession.start(facts, sealed.value, {
+            dialogue_id = 'dialogue_main_05_aftermath',
+            session_id = 'dsess_ch01_main_05_aft',
+            start_receipt_id = 'rcpt_start_ch01_main_05_aft',
+            command_id = 'cmd_dlg_ch01_main_05_aft',
+        })
+        assert.equal(started.ok, true, reason_of(started))
+        local revision = started.value.session.session_revision
+        local chose = false
+        local guard = 0
+        while facts.active_session ~= nil and guard < 60 do
+            guard = guard + 1
+            local state = facts.active_session.state
+            if state == 'WAITING_ADVANCE' then
+                local advanced = DialogueSession.advance(facts, sealed.value, {
+                    session_id = 'dsess_ch01_main_05_aft',
+                    expected_revision = revision,
+                })
+                assert.equal(advanced.ok, true, reason_of(advanced))
+                revision = advanced.value.session.session_revision
+            elseif state == 'WAITING_CHOICE' then
+                chose = true
+                local chosen = DialogueSession.choose(facts, sealed.value, {
+                    session_id = 'dsess_ch01_main_05_aft',
+                    choice_id = 'choice_main_05_official',
+                    choice_receipt_id = 'rcpt_choice_ch01_main_05_aft',
+                    expected_revision = revision,
+                    command_id = 'cmd_choice_ch01_main_05_aft',
+                })
+                assert.equal(chosen.ok, true, reason_of(chosen))
+                revision = chosen.value.session.session_revision
+            elseif state == 'ENDING' then
+                local completed = DialogueSession.complete(facts, sealed.value, {
+                    session_id = 'dsess_ch01_main_05_aft',
+                    completion_receipt_id = 'rcpt_complete_ch01_main_05_aft',
+                    command_id = 'cmd_complete_ch01_main_05_aft',
+                })
+                assert.equal(completed.ok, true, reason_of(completed))
+                break
+            else
+                break
+            end
+        end
+        assert.equal(chose, true)
+        assert.equal(facts.completed.dcomp_main_05_aftermath ~= nil, true)
+        local mem = DialogueSession.get_memory(facts, 'dmem_main_05_wounded_custody')
+        assert.equal(mem.value, 'official')
+    end),
+
     case('dialogue session can complete a linear chapter dialogue', function()
         local sealed = DialogueChapter01.seal()
         assert.equal(sealed.ok, true, reason_of(sealed))

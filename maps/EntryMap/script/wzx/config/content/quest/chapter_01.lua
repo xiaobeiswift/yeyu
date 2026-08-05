@@ -345,6 +345,7 @@ function Chapter01.build_source()
     })
 
     -- ── Main 05 夺证之人 ──────────────────────────────────────────
+    -- 对峙 → 首领战 → 战后伤者三处置
     add_objective({
         id = 'objective_main_05_confront',
         stage_id = 'stage_main_05_confront',
@@ -363,6 +364,15 @@ function Chapter01.build_source()
         event_type = 'EncounterCompleted',
         guide_ref_id = 'npc_boss_ke_lishan',
     })
+    add_objective({
+        id = 'objective_main_05_talk_aftermath',
+        stage_id = 'stage_main_05_aftermath',
+        objective_type = 'TALK',
+        target_id = 'dialogue_main_05_aftermath',
+        progress_semantics = 'ONCE_FACT',
+        event_type = 'DialogueCompleted',
+        guide_ref_id = 'npc_boss_ke_lishan',
+    })
     add_stage({
         id = 'stage_main_05_confront',
         quest_id = 'quest_main_05_proof_taker',
@@ -374,6 +384,13 @@ function Chapter01.build_source()
         id = 'stage_main_05_boss',
         quest_id = 'quest_main_05_proof_taker',
         objective_ids = { 'objective_main_05_boss' },
+        next_stage_id = 'stage_main_05_aftermath',
+        checkpoint = true,
+    })
+    add_stage({
+        id = 'stage_main_05_aftermath',
+        quest_id = 'quest_main_05_proof_taker',
+        objective_ids = { 'objective_main_05_talk_aftermath' },
         checkpoint = true,
     })
     add_quest({
@@ -382,7 +399,11 @@ function Chapter01.build_source()
         accept_policy = 'AUTO_EVENT',
         prerequisite_quest_id = 'quest_main_04_no_bandits',
         first_stage_id = 'stage_main_05_confront',
-        stage_ids = { 'stage_main_05_confront', 'stage_main_05_boss' },
+        stage_ids = {
+            'stage_main_05_confront',
+            'stage_main_05_boss',
+            'stage_main_05_aftermath',
+        },
         reward_id = 'reward_main_05',
         journal_sort_order = 50,
     })
@@ -431,6 +452,7 @@ function Chapter01.build_source()
     })
 
     -- ── Main 07 钟下遗证 ──────────────────────────────────────────
+    -- 入窟 → 搜名牌 → 钟下对白（信物/听痕/收束）
     add_objective({
         id = 'objective_main_07_reach_cavern',
         stage_id = 'stage_main_07_cavern',
@@ -449,6 +471,15 @@ function Chapter01.build_source()
         event_type = 'SearchPointResolved',
         guide_ref_id = 'interact_cavern_nameplate',
     })
+    add_objective({
+        id = 'objective_main_07_talk_proof',
+        stage_id = 'stage_main_07_debrief',
+        objective_type = 'TALK',
+        target_id = 'dialogue_main_07_proof_under_bell',
+        progress_semantics = 'ONCE_FACT',
+        event_type = 'DialogueCompleted',
+        guide_ref_id = 'npc_partner_wen_hesheng',
+    })
     add_stage({
         id = 'stage_main_07_cavern',
         quest_id = 'quest_main_07_proof_under_bell',
@@ -460,6 +491,13 @@ function Chapter01.build_source()
         id = 'stage_main_07_proof',
         quest_id = 'quest_main_07_proof_under_bell',
         objective_ids = { 'objective_main_07_search_plates' },
+        next_stage_id = 'stage_main_07_debrief',
+        checkpoint = true,
+    })
+    add_stage({
+        id = 'stage_main_07_debrief',
+        quest_id = 'quest_main_07_proof_under_bell',
+        objective_ids = { 'objective_main_07_talk_proof' },
         checkpoint = true,
     })
     add_quest({
@@ -468,12 +506,26 @@ function Chapter01.build_source()
         accept_policy = 'AUTO_EVENT',
         prerequisite_quest_id = 'quest_main_06_midnight_bell',
         first_stage_id = 'stage_main_07_cavern',
-        stage_ids = { 'stage_main_07_cavern', 'stage_main_07_proof' },
+        stage_ids = {
+            'stage_main_07_cavern',
+            'stage_main_07_proof',
+            'stage_main_07_debrief',
+        },
         reward_id = 'reward_main_07',
         journal_sort_order = 70,
     })
 
     -- ── Main 08 守院人 ────────────────────────────────────────────
+    -- 对峙对白 → 首领战 → 战后残页嘱托
+    add_objective({
+        id = 'objective_main_08_confront',
+        stage_id = 'stage_main_08_confront',
+        objective_type = 'TALK',
+        target_id = 'dialogue_main_08_meng_confront',
+        progress_semantics = 'ONCE_FACT',
+        event_type = 'DialogueCompleted',
+        guide_ref_id = 'npc_boss_meng_jiansheng',
+    })
     add_objective({
         id = 'objective_main_08_boss',
         stage_id = 'stage_main_08_boss',
@@ -483,10 +535,33 @@ function Chapter01.build_source()
         event_type = 'EncounterCompleted',
         guide_ref_id = 'npc_boss_meng_jiansheng',
     })
+    add_objective({
+        id = 'objective_main_08_talk_aftermath',
+        stage_id = 'stage_main_08_aftermath',
+        objective_type = 'TALK',
+        target_id = 'dialogue_main_08_meng_aftermath',
+        progress_semantics = 'ONCE_FACT',
+        event_type = 'DialogueCompleted',
+        guide_ref_id = 'npc_boss_meng_jiansheng',
+    })
+    add_stage({
+        id = 'stage_main_08_confront',
+        quest_id = 'quest_main_08_last_warden',
+        objective_ids = { 'objective_main_08_confront' },
+        next_stage_id = 'stage_main_08_boss',
+        checkpoint = true,
+    })
     add_stage({
         id = 'stage_main_08_boss',
         quest_id = 'quest_main_08_last_warden',
         objective_ids = { 'objective_main_08_boss' },
+        next_stage_id = 'stage_main_08_aftermath',
+        checkpoint = true,
+    })
+    add_stage({
+        id = 'stage_main_08_aftermath',
+        quest_id = 'quest_main_08_last_warden',
+        objective_ids = { 'objective_main_08_talk_aftermath' },
         checkpoint = true,
     })
     add_quest({
@@ -494,8 +569,12 @@ function Chapter01.build_source()
         category = 'MAIN',
         accept_policy = 'AUTO_EVENT',
         prerequisite_quest_id = 'quest_main_07_proof_under_bell',
-        first_stage_id = 'stage_main_08_boss',
-        stage_ids = { 'stage_main_08_boss' },
+        first_stage_id = 'stage_main_08_confront',
+        stage_ids = {
+            'stage_main_08_confront',
+            'stage_main_08_boss',
+            'stage_main_08_aftermath',
+        },
         reward_id = 'reward_main_08',
         journal_sort_order = 80,
     })
