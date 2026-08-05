@@ -323,7 +323,6 @@
     "speed_ratio_in_turn": 0.6, 
     "standard_walk_rate": 36.0, 
     "start_rft": 1.0, 
-    "state_init": "", 
     "state_list": [], 
     "strength": 10.0, 
     "strength_grow": 1.0, 

@@ -1,32 +1,10 @@
 {
     "variable_dict": {
-        "INTEGER": {
-            "GLOBAL_BAG_MAX_NUM": 0
-        }, 
-        "TABLE": {
-            "UI_Manager": null
-        }, 
+        "INTEGER": {}, 
+        "TABLE": {}, 
         "UNIT_ENTITY": {}, 
         "UNIT_NAME": {}
     }, 
-    "variable_group_info": [
-        {
-            "__tuple__": true, 
-            "items": [
-                "UI_Manager", 
-                "UI_Manager"
-            ]
-        }, 
-        {
-            "__tuple__": true, 
-            "items": [
-                "GLOBAL_BAG_MAX_NUM", 
-                "GLOBAL_BAG_MAX_NUM"
-            ]
-        }
-    ], 
-    "variable_length_dict": {
-        "GLOBAL_BAG_MAX_NUM": 0, 
-        "UI_Manager": 0
-    }
+    "variable_group_info": [], 
+    "variable_length_dict": {}
 }
