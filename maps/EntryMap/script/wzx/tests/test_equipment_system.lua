@@ -1450,4 +1450,323 @@ return {
         assert.equal(resurrect.ok, false)
         assert.equal(resurrect.error.code, 'EQUIPMENT_TOMBSTONED')
     end),
+
+    case('salvage destroy grants currency and items via economy without double grant', function()
+        local catalog = build_catalog({
+            equipment_definitions = {
+                equip_def({ salvage_reward_id = 'reward_salvage_sword' }),
+                equip_body(),
+            },
+        })
+
+        local currency_catalog = CurrencyCatalog.build({
+            currency_definitions = {
+                {
+                    id = 'currency_copper',
+                    schema_version = 1,
+                    category = 'SOFT',
+                    balance_cap = 100000,
+                    source_policy_id = 'currpolicy_copper_source',
+                    sink_policy_id = 'currpolicy_copper_sink',
+                    name_key = 'currency.copper.name',
+                },
+            },
+        })
+        assert.equal(currency_catalog.ok, true)
+        local reward_catalog = RewardCatalog.build({
+            reward_bundles = {
+                {
+                    id = 'reward_salvage_sword',
+                    schema_version = 1,
+                    entries = {
+                        {
+                            entry_order = 1,
+                            entry_type = 'CURRENCY',
+                            target_id = 'currency_copper',
+                            quantity_min = 40,
+                            quantity_max = 40,
+                        },
+                        {
+                            entry_order = 2,
+                            entry_type = 'ITEM',
+                            target_id = 'item_salvage_shard',
+                            quantity_min = 2,
+                            quantity_max = 2,
+                        },
+                    },
+                },
+            },
+        })
+        assert.equal(reward_catalog.ok, true)
+
+        local item_catalog = ItemCatalog.build({
+            item_definitions = {
+                {
+                    id = 'item_salvage_shard',
+                    schema_version = 1,
+                    category = 'MATERIAL',
+                    name_key = 'item.salvage_shard.name',
+                    max_stack = 99,
+                    ownership_cap = 999,
+                    rarity = 'COMMON',
+                },
+            },
+        })
+        assert.equal(item_catalog.ok, true)
+        local inventory_store = FakeInventoryStore.new()
+        assert.equal(inventory_store.ok, true)
+        local inventory = InventoryService.bind({
+            item_catalog = item_catalog.value,
+            store = inventory_store.value,
+        })
+        assert.equal(inventory.ok, true)
+
+        local economy_store = FakeEconomyStore.new()
+        assert.equal(economy_store.ok, true)
+        local economy = EconomyService.bind({
+            currency_catalog = currency_catalog.value,
+            reward_catalog = reward_catalog.value,
+            store = economy_store.value,
+            inventory_service = inventory.value,
+        })
+        assert.equal(economy.ok, true)
+
+        local equip_store = FakeEquipmentStore.new()
+        assert.equal(equip_store.ok, true)
+        local service = EquipmentService.bind({
+            catalog = catalog,
+            store = equip_store.value,
+            economy_service = economy.value,
+        })
+        assert.equal(service.ok, true)
+
+        assert.equal(service.value:create_instance({
+            equipment_id = 'equip_iron_sword',
+            origin_type = 'LOOT',
+            origin_ref = 'battle.intro.drop',
+            creation_ordinal = 0,
+            config_version = 1,
+            seed = 41,
+            instance_id = 'eqinst_sword_salvage',
+            skip_save = true,
+        }).ok, true)
+
+        local copper_before = economy.value:get_balance('currency_copper')
+        assert.equal(copper_before.ok, true)
+        assert.equal(copper_before.value.balance, 0)
+        assert.equal(inventory.value:get_count('item_salvage_shard').value.count, 0)
+
+        local receipt_id = make_receipt_id('salvage_once')
+        local destroyed = service.value:destroy({
+            instance_id = 'eqinst_sword_salvage',
+            receipt_id = receipt_id,
+            reason = 'SALVAGE',
+            skip_save = true,
+        })
+        assert.equal(destroyed.ok, true, destroyed.error and destroyed.error.code)
+        assert.equal(destroyed.value.already_committed, false)
+        assert.equal(destroyed.value.reason, 'SALVAGE')
+        assert.equal(destroyed.value.granted.salvage_reward_id, 'reward_salvage_sword')
+        assert.equal(#destroyed.value.granted.rewards, 1)
+        assert.equal(destroyed.value.granted.rewards[1].currency_id, 'currency_copper')
+        assert.equal(destroyed.value.granted.rewards[1].amount, 40)
+        assert.equal(#destroyed.value.granted.item_grants, 1)
+        assert.equal(destroyed.value.granted.item_grants[1].item_id, 'item_salvage_shard')
+        assert.equal(destroyed.value.granted.item_grants[1].amount, 2)
+        assert.equal(destroyed.value.granted.economy_receipt_id ~= nil, true)
+
+        assert.equal(service.value:get_instance('eqinst_sword_salvage').ok, false)
+        local tombstone = equip_store.value:get_tombstone('eqinst_sword_salvage')
+        assert.equal(tombstone.ok, true)
+        assert.equal(tombstone.value ~= nil, true)
+
+        local copper_after = economy.value:get_balance('currency_copper')
+        assert.equal(copper_after.value.balance, 40)
+        assert.equal(inventory.value:get_count('item_salvage_shard').value.count, 2)
+
+        local replay = service.value:destroy({
+            instance_id = 'eqinst_sword_salvage',
+            receipt_id = receipt_id,
+            reason = 'SALVAGE',
+            skip_save = true,
+        })
+        assert.equal(replay.ok, true, replay.error and replay.error.code)
+        assert.equal(replay.value.already_committed, true)
+        assert.equal(replay.value.granted.salvage_reward_id, nil)
+        assert.equal(#replay.value.granted.rewards, 0)
+        assert.equal(#replay.value.granted.item_grants, 0)
+
+        copper_after = economy.value:get_balance('currency_copper')
+        assert.equal(copper_after.value.balance, 40)
+        assert.equal(inventory.value:get_count('item_salvage_shard').value.count, 2)
+    end),
+
+    case('salvage with reward id but no economy service fails and keeps instance', function()
+        local catalog = build_catalog({
+            equipment_definitions = {
+                equip_def({ salvage_reward_id = 'reward_salvage_sword' }),
+                equip_body(),
+            },
+        })
+        local store = FakeEquipmentStore.new()
+        assert.equal(store.ok, true)
+        local service = EquipmentService.bind({
+            catalog = catalog,
+            store = store.value,
+        })
+        assert.equal(service.ok, true)
+
+        assert.equal(service.value:create_instance({
+            equipment_id = 'equip_iron_sword',
+            origin_type = 'LOOT',
+            origin_ref = 'battle.intro.drop',
+            creation_ordinal = 0,
+            config_version = 1,
+            seed = 42,
+            instance_id = 'eqinst_sword_salvage_no_econ',
+            skip_save = true,
+        }).ok, true)
+
+        local failed = service.value:destroy({
+            instance_id = 'eqinst_sword_salvage_no_econ',
+            receipt_id = make_receipt_id('salvage_no_econ'),
+            reason = 'SALVAGE',
+            skip_save = true,
+        })
+        assert.equal(failed.ok, false)
+        assert.equal(failed.error.code, 'EQUIPMENT_SALVAGE_SERVICE_REQUIRED')
+        assert.equal(
+            service.value:get_instance('eqinst_sword_salvage_no_econ').ok,
+            true
+        )
+        local tombstone = store.value:get_tombstone('eqinst_sword_salvage_no_econ')
+        assert.equal(tombstone.ok, true)
+        assert.equal(tombstone.value, nil)
+    end),
+
+    case('discard ignores salvage_reward_id and grants nothing', function()
+        local catalog = build_catalog({
+            equipment_definitions = {
+                equip_def({ salvage_reward_id = 'reward_salvage_sword' }),
+                equip_body(),
+            },
+        })
+        local currency_catalog = CurrencyCatalog.build({
+            currency_definitions = {
+                {
+                    id = 'currency_copper',
+                    schema_version = 1,
+                    category = 'SOFT',
+                    balance_cap = 100000,
+                    source_policy_id = 'currpolicy_copper_source',
+                    sink_policy_id = 'currpolicy_copper_sink',
+                    name_key = 'currency.copper.name',
+                },
+            },
+        })
+        assert.equal(currency_catalog.ok, true)
+        local reward_catalog = RewardCatalog.build({
+            reward_bundles = {
+                {
+                    id = 'reward_salvage_sword',
+                    schema_version = 1,
+                    entries = {
+                        {
+                            entry_order = 1,
+                            entry_type = 'CURRENCY',
+                            target_id = 'currency_copper',
+                            quantity_min = 40,
+                            quantity_max = 40,
+                        },
+                    },
+                },
+            },
+        })
+        assert.equal(reward_catalog.ok, true)
+        local economy_store = FakeEconomyStore.new()
+        assert.equal(economy_store.ok, true)
+        local economy = EconomyService.bind({
+            currency_catalog = currency_catalog.value,
+            reward_catalog = reward_catalog.value,
+            store = economy_store.value,
+        })
+        assert.equal(economy.ok, true)
+
+        local equip_store = FakeEquipmentStore.new()
+        assert.equal(equip_store.ok, true)
+        local service = EquipmentService.bind({
+            catalog = catalog,
+            store = equip_store.value,
+            economy_service = economy.value,
+        })
+        assert.equal(service.ok, true)
+
+        assert.equal(service.value:create_instance({
+            equipment_id = 'equip_iron_sword',
+            origin_type = 'LOOT',
+            origin_ref = 'battle.intro.drop',
+            creation_ordinal = 0,
+            config_version = 1,
+            seed = 43,
+            instance_id = 'eqinst_sword_discard_reward',
+            skip_save = true,
+        }).ok, true)
+
+        local destroyed = service.value:destroy({
+            instance_id = 'eqinst_sword_discard_reward',
+            receipt_id = make_receipt_id('discard_with_reward_id'),
+            reason = 'DISCARD',
+            skip_save = true,
+        })
+        assert.equal(destroyed.ok, true, destroyed.error and destroyed.error.code)
+        assert.equal(destroyed.value.reason, 'DISCARD')
+        assert.equal(destroyed.value.granted.salvage_reward_id, nil)
+        assert.equal(#destroyed.value.granted.rewards, 0)
+        assert.equal(economy.value:get_balance('currency_copper').value.balance, 0)
+        assert.equal(
+            service.value:get_instance('eqinst_sword_discard_reward').ok,
+            false
+        )
+    end),
+
+    case('salvage without salvage_reward_id destroys without requiring economy', function()
+        local catalog = build_catalog()
+        local store = FakeEquipmentStore.new()
+        assert.equal(store.ok, true)
+        local service = EquipmentService.bind({
+            catalog = catalog,
+            store = store.value,
+        })
+        assert.equal(service.ok, true)
+
+        assert.equal(service.value:create_instance({
+            equipment_id = 'equip_iron_sword',
+            origin_type = 'LOOT',
+            origin_ref = 'battle.intro.drop',
+            creation_ordinal = 0,
+            config_version = 1,
+            seed = 44,
+            instance_id = 'eqinst_sword_salvage_empty',
+            skip_save = true,
+        }).ok, true)
+
+        local destroyed = service.value:destroy({
+            instance_id = 'eqinst_sword_salvage_empty',
+            receipt_id = make_receipt_id('salvage_empty_reward'),
+            reason = 'SALVAGE',
+            skip_save = true,
+        })
+        assert.equal(destroyed.ok, true, destroyed.error and destroyed.error.code)
+        assert.equal(destroyed.value.reason, 'SALVAGE')
+        assert.equal(destroyed.value.granted.salvage_reward_id, nil)
+        assert.equal(#destroyed.value.granted.rewards, 0)
+        assert.equal(#destroyed.value.granted.item_grants, 0)
+        assert.equal(
+            service.value:get_instance('eqinst_sword_salvage_empty').ok,
+            false
+        )
+        local tombstone = store.value:get_tombstone('eqinst_sword_salvage_empty')
+        assert.equal(tombstone.ok, true)
+        assert.equal(tombstone.value ~= nil, true)
+    end),
 }

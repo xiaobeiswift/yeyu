@@ -2,7 +2,8 @@
 -- + optional save. Enhance/temper debit currency (10) and materials (09) with
 -- skip_save, then write equipment instance + slot-5 operation receipt. Destroy
 -- removes the instance, writes a slot-4 tombstone, and records DESTROY_EQUIPMENT
--- on slot 5. Not a full ADR-0002 PREPARED saga.
+-- on slot 5. SALVAGE with definition.salvage_reward_id grants via EconomyService
+-- (prepare+grant, skip_save) before destroy. Not a full ADR-0002 PREPARED saga.
 
 local CanonicalReceiptHashV1 = require 'wzx.domain.common.canonical_receipt_hash_v1'
 local CharacterLoadout = require 'wzx.domain.equipment.character_loadout'
@@ -1121,8 +1122,63 @@ function Service:temper(input)
     })
 end
 
+local function empty_granted_summary()
+    return {
+        salvage_reward_id = nil,
+        rewards = {},
+        item_grants = {},
+        economy_receipt_id = nil,
+        already_granted = false,
+    }
+end
+
+local function copy_reward_rows(rows)
+    local copied = {}
+    if type_value(rows) ~= 'table' then
+        return copied
+    end
+    local index
+    for index = 1, #rows do
+        local row = rows[index]
+        copied[index] = {
+            currency_id = row.currency_id,
+            amount = row.amount,
+        }
+    end
+    return copied
+end
+
+local function copy_item_grant_rows(rows)
+    local copied = {}
+    if type_value(rows) ~= 'table' then
+        return copied
+    end
+    local index
+    for index = 1, #rows do
+        local row = rows[index]
+        copied[index] = {
+            item_id = row.item_id,
+            amount = row.amount,
+        }
+    end
+    return copied
+end
+
+local function build_granted_summary(salvage_reward_id, grant_value)
+    local summary = {
+        salvage_reward_id = salvage_reward_id,
+        rewards = copy_reward_rows(grant_value and grant_value.rewards),
+        item_grants = copy_item_grant_rows(grant_value and grant_value.item_grants),
+        economy_receipt_id = grant_value and grant_value.receipt_id or nil,
+        already_granted = grant_value and grant_value.already_committed == true,
+    }
+    return summary
+end
+
 --- Destroy an equipment instance and record a permanent tombstone.
---- Idempotent on receipt_id. Does not settle salvage rewards (09/10).
+--- Idempotent on receipt_id. When reason=SALVAGE and the equipment definition
+--- has salvage_reward_id, grants that reward via EconomyService (skip_save)
+--- before destroying so a failed grant leaves the instance intact.
 function Service:destroy(input)
     local state = STATES[self]
     if state == nil then
@@ -1200,6 +1256,8 @@ function Service:destroy(input)
         if not save.ok then
             return save
         end
+        -- Reward details live only on the first-commit service result; replays
+        -- return an empty granted summary so callers do not double-apply.
         return result_ok({
             status = 'COMMITTED',
             already_committed = true,
@@ -1211,6 +1269,7 @@ function Service:destroy(input)
             destroyed_revision = nil,
             equipment_save_revision =
                 existing.value.equipment_save_revision_after,
+            granted = empty_granted_summary(),
             save = save.value,
         })
     end
@@ -1250,6 +1309,75 @@ function Service:destroy(input)
         )
     end
 
+    local granted = empty_granted_summary()
+    local salvage_reward_id = nil
+    if reason == 'SALVAGE' then
+        local definition = state.catalog:require_equipment(instance.equipment_id)
+        if not definition.ok then
+            return definition
+        end
+        salvage_reward_id = definition.value.salvage_reward_id
+        if salvage_reward_id ~= nil then
+            if state.economy_service == nil then
+                return fail(
+                    EquipmentErrorCodes.EQUIPMENT_SALVAGE_SERVICE_REQUIRED,
+                    'ECONOMY_SERVICE_REQUIRED_FOR_SALVAGE_REWARD',
+                    {
+                        instance_id = instance_id,
+                        salvage_reward_id = salvage_reward_id,
+                    },
+                    false
+                )
+            end
+
+            local source_occurrence = canonical_derive(
+                'equipment_salvage_economy_source',
+                {
+                    { name = 'parent_receipt_id', type = 'STRING' },
+                },
+                { parent_receipt_id = receipt_id }
+            )
+            if not source_occurrence.ok then
+                return source_occurrence
+            end
+            -- source_occurrence_id must be a component (no colon); use digest prefix.
+            local source_id = 'eqslv_' .. string.sub(source_occurrence.value.digest, 1, 48)
+
+            local economy_receipt = canonical_derive(
+                'equipment_salvage_economy_grant',
+                {
+                    { name = 'parent_receipt_id', type = 'STRING' },
+                },
+                { parent_receipt_id = receipt_id }
+            )
+            if not economy_receipt.ok then
+                return economy_receipt
+            end
+
+            local prepared = state.economy_service:prepare_reward({
+                reward_id = salvage_reward_id,
+                source_type = 'EQUIP_SALVAGE',
+                source_ref = salvage_reward_id,
+                source_occurrence_id = source_id,
+            })
+            if not prepared.ok then
+                return prepared
+            end
+
+            local grant_result = state.economy_service:grant_prepared_reward({
+                prepared = prepared.value,
+                receipt_id = economy_receipt.value.receipt_id,
+                purpose_type = 'EQUIP_SALVAGE',
+                purpose_ref = instance_id,
+                skip_save = true,
+            })
+            if not grant_result.ok then
+                return grant_result
+            end
+            granted = build_granted_summary(salvage_reward_id, grant_result.value)
+        end
+    end
+
     local destroyed_revision = instance.instance_revision or 0
     local destroyed = state.store:destroy_instance(
         instance_id,
@@ -1273,6 +1401,8 @@ function Service:destroy(input)
         return result
     end
 
+    -- Keep copper_cost=0 on DESTROY receipts (spend audit field); salvage
+    -- payout details are returned only on the service result.
     local receipt_row = {
         receipt_id = receipt_id,
         request_hash = request_hash,
@@ -1308,6 +1438,7 @@ function Service:destroy(input)
                 reason = stored.value.receipt.destroy_reason,
                 equipment_save_revision =
                     stored.value.receipt.equipment_save_revision_after,
+                granted = empty_granted_summary(),
                 save = save.value,
             })
         end
@@ -1334,6 +1465,7 @@ function Service:destroy(input)
         destroyed_revision = destroyed_revision,
         cleared_slots = destroyed.value.cleared_slots,
         equipment_save_revision = destroyed.value.equipment_save_revision,
+        granted = granted,
         save = save.value,
     })
 end
