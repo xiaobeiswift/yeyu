@@ -25,3 +25,15 @@ Thumbs.db
 /tmp/
 /test-results/
 /coverage/
+
+# Local external toolchain binaries and dependencies under tools/.
+# Only hand-written scripts (e.g. tools/serve_opening_video.js, tools/test.ps1) are tracked.
+/tools/ffmpeg/
+/tools/ffmpeg-bin/
+/tools/node_modules/
+/tools/ffmpeg.exe
+/tools/ff.exe
+/tools/ffmpeg.zip
+/tools/ff.err.txt
+/tools/ff_ver.txt
+/tools/ff_ver_err.txt
