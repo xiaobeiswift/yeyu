@@ -52,4 +52,7 @@ return {
     'wzx.tests.test_play_save_load_golden_path',
     'wzx.tests.test_character_build_and_save_bridge',
     'wzx.tests.test_bootstrap',
+    'wzx.tests.test_companion_domain',
+    'wzx.tests.test_faction_domain',
+    'wzx.tests.test_cycle_domain',
 }

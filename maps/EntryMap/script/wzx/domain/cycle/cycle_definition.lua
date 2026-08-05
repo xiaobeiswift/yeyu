@@ -1,5 +1,5 @@
 -- CycleDefinition normalization and invariants (system 17 pure domain).
--- No Y3, no wall-clock, no math.random.
+-- No platform APIs, wall-clock, or language PRNG.
 
 local Result = require 'wzx.domain.common.result'
 local RuntimeId = require 'wzx.domain.common.runtime_id'

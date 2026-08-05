@@ -1,6 +1,6 @@
 -- Trusted period calculator (system 17 pure domain).
 -- Converts CycleDefinition + trusted server UTC seconds into a Period.
--- Does not read wall-clock, y3.*, or math.random.
+-- Does not read wall-clock, platform APIs, or language PRNG.
 
 local DecimalInteger = require 'wzx.domain.common.decimal_integer'
 local Result = require 'wzx.domain.common.result'

@@ -1,5 +1,5 @@
 -- Pure domain affection points / rank / gift delta rules for system 02.
--- Compatible with Lua 5.1 and Y3 Lua 5.4 common subset; no y3 / time / random.
+-- Compatible with Lua 5.1 and engine 5.4 common subset; no platform, wall clock, or PRNG.
 
 local Result = require 'wzx.domain.common.result'
 local RuntimeId = require 'wzx.domain.common.runtime_id'
