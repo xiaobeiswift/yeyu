@@ -1,4 +1,5 @@
 local PartyAggregate = require 'wzx.domain.party.party_aggregate'
+local PartyPreset = require 'wzx.domain.party.party_preset'
 local PartySaveCodec = require 'wzx.domain.party.party_save_codec'
 local Result = require 'wzx.domain.common.result'
 
@@ -54,6 +55,14 @@ local function copy_party(party)
     }
 end
 
+local function copy_preset(preset)
+    local snap = PartyPreset.copy_preset(preset)
+    if not snap.ok then
+        return nil
+    end
+    return snap.value
+end
+
 local function snapshot_state(state)
     local parties = {}
     local context
@@ -64,10 +73,16 @@ local function snapshot_state(state)
     table.sort(parties, function(left, right)
         return left.party_context < right.party_context
     end)
-    return {
+
+    local listed = PartyPreset.presets_map_to_list(state.presets)
+    if not listed.ok then
+        return listed
+    end
+    return result_ok({
         party_save_revision = state.party_save_revision,
         parties = parties,
-    }
+        presets = listed.value,
+    })
 end
 
 function FakePartyStore.new(options)
@@ -86,6 +101,8 @@ function FakePartyStore.new(options)
         parties = {
             [initial_context] = empty.value,
         },
+        presets = {},
+        next_preset_seq = 1,
     }
     return result_ok(view)
 end
@@ -132,12 +149,164 @@ function Store:replace_party(party, options)
     })
 end
 
+function Store:get_preset(preset_id)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local preset = state.presets[preset_id]
+    if preset == nil then
+        return result_err(
+            'PARTY_PRESET_NOT_FOUND',
+            'error.party.party_preset_not_found',
+            false,
+            { reason = 'PRESET_NOT_FOUND', preset_id = preset_id }
+        )
+    end
+    local copied = copy_preset(preset)
+    if copied == nil then
+        return invalid('PRESET_COPY_FAILED', { preset_id = preset_id })
+    end
+    return result_ok(copied)
+end
+
+function Store:list_presets(party_context)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local listed = PartyPreset.presets_map_to_list(state.presets)
+    if not listed.ok then
+        return listed
+    end
+    if party_context == nil then
+        return result_ok(listed.value)
+    end
+    local filtered = {}
+    local index
+    for index = 1, #listed.value do
+        if listed.value[index].party_context == party_context then
+            filtered[#filtered + 1] = listed.value[index]
+        end
+    end
+    return result_ok(filtered)
+end
+
+function Store:get_presets_map()
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local listed = PartyPreset.presets_map_to_list(state.presets)
+    if not listed.ok then
+        return listed
+    end
+    local mapped = PartyPreset.presets_list_to_map(listed.value)
+    if not mapped.ok then
+        return mapped
+    end
+    return result_ok(mapped.value)
+end
+
+-- Full replace of presets map. options.bump_save_revision defaults true.
+function Store:replace_presets(presets_map, options)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    if type_value(presets_map) ~= 'table' or get_metatable(presets_map) ~= nil then
+        return invalid('PRESETS_MAP_REQUIRED', { field = 'presets_map' })
+    end
+    local listed = PartyPreset.presets_map_to_list(presets_map)
+    if not listed.ok then
+        return listed
+    end
+    local validated = PartyPreset.presets_list_to_map(listed.value)
+    if not validated.ok then
+        return validated
+    end
+    options = options or {}
+    local bump = options.bump_save_revision
+    if bump == nil then
+        bump = true
+    end
+    state.presets = validated.value
+    if bump == true then
+        state.party_save_revision = state.party_save_revision + 1
+    end
+    return result_ok({
+        party_save_revision = state.party_save_revision,
+        preset_count = #listed.value,
+    })
+end
+
+function Store:replace_party_and_presets(party, presets_map, options)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local snap = PartyAggregate.snapshot(party)
+    if not snap.ok then
+        return snap
+    end
+    if type_value(presets_map) ~= 'table' or get_metatable(presets_map) ~= nil then
+        return invalid('PRESETS_MAP_REQUIRED', { field = 'presets_map' })
+    end
+    local listed = PartyPreset.presets_map_to_list(presets_map)
+    if not listed.ok then
+        return listed
+    end
+    local validated = PartyPreset.presets_list_to_map(listed.value)
+    if not validated.ok then
+        return validated
+    end
+    options = options or {}
+    local bump = options.bump_save_revision
+    if bump == nil then
+        bump = true
+    end
+    state.parties[snap.value.party_context] = copy_party(snap.value)
+    state.presets = validated.value
+    if bump == true then
+        state.party_save_revision = state.party_save_revision + 1
+    end
+    return result_ok({
+        party_save_revision = state.party_save_revision,
+        party_context = snap.value.party_context,
+        revision = snap.value.revision,
+        preset_count = #listed.value,
+    })
+end
+
+function Store:allocate_preset_id()
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local seq = state.next_preset_seq
+    local guard = 0
+    while guard < 10000 do
+        local candidate = 'preset_party_' .. tostring(seq)
+        seq = seq + 1
+        guard = guard + 1
+        if state.presets[candidate] == nil then
+            state.next_preset_seq = seq
+            return result_ok(candidate)
+        end
+    end
+    return invalid('PRESET_ID_ALLOCATION_EXHAUSTED')
+end
+
 function Store:export_save_bundle()
     local state = STATES[self]
     if state == nil then
         return invalid('STORE_AUTHORITY_REQUIRED')
     end
-    return PartySaveCodec.encode(snapshot_state(state))
+    local snap = snapshot_state(state)
+    if not snap.ok then
+        return snap
+    end
+    return PartySaveCodec.encode(snap.value)
 end
 
 function Store:import_save_bundle(bundle)
@@ -155,8 +324,26 @@ function Store:import_save_bundle(bundle)
         local party = decoded.value.parties[index]
         parties[party.party_context] = copy_party(party)
     end
+    local mapped = PartyPreset.presets_list_to_map(decoded.value.presets or {})
+    if not mapped.ok then
+        return mapped
+    end
     state.party_save_revision = decoded.value.party_save_revision
     state.parties = parties
+    state.presets = mapped.value
+
+    local max_seq = state.next_preset_seq
+    local preset_id
+    for preset_id in raw_next, state.presets do
+        local num = string.match(preset_id, '^preset_party_(%d+)$')
+        if num ~= nil then
+            local n = tonumber(num)
+            if n ~= nil and n >= max_seq then
+                max_seq = n + 1
+            end
+        end
+    end
+    state.next_preset_seq = max_seq
     return result_ok(true)
 end
 

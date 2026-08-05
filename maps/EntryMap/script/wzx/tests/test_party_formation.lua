@@ -5,6 +5,7 @@ local HydrateGameRuntime = require 'wzx.application.use_cases.save.hydrate_game_
 local LoadGameSave = require 'wzx.application.use_cases.save.load_game_save'
 local MemorySaveStore = require 'wzx.adapters.fake.services.memory_save_store'
 local PartyAggregate = require 'wzx.domain.party.party_aggregate'
+local PartyPreset = require 'wzx.domain.party.party_preset'
 local PartySaveBridge = require 'wzx.application.use_cases.party.party_save_bridge'
 local PartySaveCodec = require 'wzx.domain.party.party_save_codec'
 local PartySectionRegistrar = require 'wzx.config.schema.party.section_registrar'
@@ -27,6 +28,26 @@ local function members_two()
             position_index = 4,
             entry_order = 2,
             role_tag_override = 'SUPPORT',
+        },
+    }
+end
+
+local function members_three()
+    return {
+        {
+            character_id = 'char_hero',
+            position_index = 1,
+            entry_order = 1,
+        },
+        {
+            character_id = 'char_ally',
+            position_index = 4,
+            entry_order = 2,
+        },
+        {
+            character_id = 'char_guest',
+            position_index = 7,
+            entry_order = 3,
         },
     }
 end
@@ -317,5 +338,354 @@ return {
         assert.equal(swapped.ok, true)
         assert.equal(swapped.value.revision, 2)
         assert.equal(swapped.value.save.status, 'SKIPPED')
+    end),
+
+    case('party save codec round-trips non-empty presets', function()
+        local encoded = PartySaveCodec.encode({
+            party_save_revision = 4,
+            parties = {
+                {
+                    party_context = 'PVE_MAIN',
+                    leader_character_id = 'char_hero',
+                    formation_template_id = nil,
+                    active_preset_id = 'preset_party_alpha',
+                    is_dirty_from_preset = false,
+                    revision = 2,
+                    member_rows = members_two(),
+                },
+            },
+            presets = {
+                {
+                    preset_id = 'preset_party_alpha',
+                    party_context = 'PVE_MAIN',
+                    display_name = '锋矢',
+                    leader_character_id = 'char_hero',
+                    formation_template_id = 'formation_default',
+                    revision = 1,
+                    protected = false,
+                    member_rows = members_two(),
+                },
+                {
+                    preset_id = 'preset_party_beta',
+                    party_context = 'PVE_MAIN',
+                    display_name = '',
+                    leader_character_id = 'char_ally',
+                    formation_template_id = nil,
+                    revision = 3,
+                    protected = false,
+                    member_rows = {
+                        {
+                            character_id = 'char_ally',
+                            position_index = 0,
+                            entry_order = 1,
+                        },
+                    },
+                },
+            },
+        })
+        assert.equal(encoded.ok, true, encoded.error and encoded.error.details and encoded.error.details.reason)
+        assert.equal(#encoded.value.preset_header_rows, 2)
+        assert.equal(#encoded.value.preset_member_rows, 3)
+        assert.equal(encoded.value.preset_header_rows[1].preset_id, 'preset_party_alpha')
+        assert.equal(encoded.value.preset_header_rows[1].display_name, '锋矢')
+
+        local decoded = PartySaveCodec.decode(encoded.value)
+        assert.equal(decoded.ok, true, decoded.error and decoded.error.details and decoded.error.details.reason)
+        assert.equal(#decoded.value.presets, 2)
+        assert.equal(decoded.value.presets[1].preset_id, 'preset_party_alpha')
+        assert.equal(#decoded.value.presets[1].member_rows, 2)
+        assert.equal(decoded.value.presets[2].revision, 3)
+        assert.equal(decoded.value.parties[1].active_preset_id, 'preset_party_alpha')
+    end),
+
+    case('save preset enforces five per context limit', function()
+        local service = PartyService.bind({
+            party_context = 'PVE_MAIN',
+            owned_character_ids = {
+                char_hero = true,
+                char_ally = true,
+            },
+        })
+        assert.equal(service.ok, true)
+        local committed = service.value:commit_formation({
+            member_rows = members_two(),
+            leader_character_id = 'char_hero',
+            expected_revision = 0,
+        })
+        assert.equal(committed.ok, true)
+
+        local index
+        for index = 1, 5 do
+            local saved = service.value:save_preset({
+                display_name = '套' .. tostring(index),
+                member_rows = members_two(),
+                leader_character_id = 'char_hero',
+            })
+            assert.equal(saved.ok, true, saved.error and saved.error.code)
+            assert.equal(saved.value.created, true)
+        end
+        local sixth = service.value:save_preset({
+            display_name = '超额',
+            member_rows = members_two(),
+            leader_character_id = 'char_hero',
+        })
+        assert.equal(sixth.ok, false)
+        assert.equal(sixth.error.code, 'PARTY_PRESET_LIMIT_REACHED')
+
+        local listed = service.value:list_presets()
+        assert.equal(listed.ok, true)
+        assert.equal(#listed.value, 5)
+    end),
+
+    case('apply preset replaces formation and sets active_preset_id', function()
+        local service = PartyService.bind({
+            owned_character_ids = {
+                char_hero = true,
+                char_ally = true,
+                char_guest = true,
+            },
+        })
+        assert.equal(service.ok, true)
+        local committed = service.value:commit_formation({
+            member_rows = {
+                {
+                    character_id = 'char_hero',
+                    position_index = 0,
+                    entry_order = 1,
+                },
+            },
+            leader_character_id = 'char_hero',
+            expected_revision = 0,
+        })
+        assert.equal(committed.ok, true)
+
+        local saved = service.value:save_preset({
+            preset_id = 'preset_party_mainline',
+            display_name = '主线',
+            member_rows = members_three(),
+            leader_character_id = 'char_hero',
+            formation_template_id = 'formation_default',
+        })
+        assert.equal(saved.ok, true, saved.error and saved.error.code)
+        assert.equal(saved.value.preset.revision, 1)
+
+        local applied = service.value:apply_preset({
+            preset_id = 'preset_party_mainline',
+            expected_formation_revision = 1,
+        })
+        assert.equal(applied.ok, true, applied.error and applied.error.code)
+        assert.equal(applied.value.status, 'APPLIED')
+        assert.equal(applied.value.revision, 2)
+        assert.equal(applied.value.formation.active_preset_id, 'preset_party_mainline')
+        assert.equal(applied.value.formation.is_dirty_from_preset, false)
+        assert.equal(#applied.value.formation.member_rows, 3)
+        assert.equal(
+            applied.value.formation.formation_template_id,
+            'formation_default'
+        )
+    end),
+
+    case('apply preset with unowned member returns repair_draft without overwrite', function()
+        local service = PartyService.bind({
+            owned_character_ids = {
+                char_hero = true,
+                char_ally = true,
+            },
+        })
+        assert.equal(service.ok, true)
+        local committed = service.value:commit_formation({
+            member_rows = members_two(),
+            leader_character_id = 'char_hero',
+            expected_revision = 0,
+        })
+        assert.equal(committed.ok, true)
+
+        local saved = service.value:save_preset({
+            preset_id = 'preset_party_broken',
+            display_name = '缺人',
+            member_rows = members_three(),
+            leader_character_id = 'char_hero',
+        })
+        assert.equal(saved.ok, true)
+
+        local applied = service.value:apply_preset({
+            preset_id = 'preset_party_broken',
+            expected_formation_revision = 1,
+        })
+        assert.equal(applied.ok, false)
+        assert.equal(applied.error.code, 'PARTY_PRESET_REPAIR_REQUIRED')
+        assert.equal(applied.error.details.repair_draft ~= nil, true)
+        assert.equal(#applied.error.details.invalid_members, 1)
+        assert.equal(
+            applied.error.details.invalid_members[1].character_id,
+            'char_guest'
+        )
+        assert.equal(#applied.error.details.repair_draft.member_rows, 2)
+
+        local formation = service.value:get_formation()
+        assert.equal(formation.ok, true)
+        assert.equal(formation.value.revision, 1)
+        assert.equal(#formation.value.member_rows, 2)
+        assert.equal(formation.value.active_preset_id, nil)
+    end),
+
+    case('delete preset removes it and clears active_preset_id only', function()
+        local service = PartyService.bind({
+            owned_character_ids = {
+                char_hero = true,
+                char_ally = true,
+            },
+        })
+        assert.equal(service.ok, true)
+        assert.equal(service.value:commit_formation({
+            member_rows = members_two(),
+            leader_character_id = 'char_hero',
+        }).ok, true)
+
+        local saved = service.value:save_preset({
+            preset_id = 'preset_party_active',
+            display_name = '当前',
+            member_rows = members_two(),
+            leader_character_id = 'char_hero',
+        })
+        assert.equal(saved.ok, true)
+        local applied = service.value:apply_preset({
+            preset_id = 'preset_party_active',
+            expected_formation_revision = 1,
+        })
+        assert.equal(applied.ok, true)
+        assert.equal(applied.value.formation.active_preset_id, 'preset_party_active')
+
+        local deleted = service.value:delete_preset({
+            preset_id = 'preset_party_active',
+            expected_revision = 1,
+        })
+        assert.equal(deleted.ok, true, deleted.error and deleted.error.code)
+        assert.equal(deleted.value.cleared_active_preset, true)
+        assert.equal(deleted.value.formation.active_preset_id, nil)
+        assert.equal(#deleted.value.formation.member_rows, 2)
+        assert.equal(deleted.value.formation.revision, 2)
+
+        local listed = service.value:list_presets()
+        assert.equal(listed.ok, true)
+        assert.equal(#listed.value, 0)
+
+        local missing = service.value:delete_preset({
+            preset_id = 'preset_party_active',
+        })
+        assert.equal(missing.ok, false)
+        assert.equal(missing.error.code, 'PARTY_PRESET_NOT_FOUND')
+    end),
+
+    case('protected preset cannot be deleted', function()
+        local map = {}
+        local saved = PartyPreset.save_preset(map, {
+            preset_id = 'preset_party_system',
+            display_name = '系统',
+            party_context = 'PVE_MAIN',
+            leader_character_id = 'char_hero',
+            member_rows = members_two(),
+            protected = true,
+        })
+        assert.equal(saved.ok, true)
+        local deleted = PartyPreset.delete_preset(
+            saved.value.presets_map,
+            'preset_party_system',
+            1
+        )
+        assert.equal(deleted.ok, false)
+        assert.equal(deleted.error.code, 'PARTY_PRESET_PROTECTED')
+    end),
+
+    case('store export import preserves presets via save bridge path', function()
+        local memory = MemorySaveStore.new()
+        local coordinator = SaveCoordinator.bind({ save_store = memory })
+        assert.equal(coordinator.ok, true)
+        local invoke = SaveCoordinator.fake_invoke(memory)
+        local load = LoadGameSave.bind({ coordinator = coordinator.value })
+        assert.equal(load.ok, true)
+
+        local store = FakePartyStore.new({ party_context = 'PVE_MAIN' })
+        assert.equal(store.ok, true)
+        local bridge = PartySaveBridge.bind({
+            store = store.value,
+            coordinator = coordinator.value,
+            save_invoke = invoke,
+            default_save_seed = 303002,
+        })
+        assert.equal(bridge.ok, true)
+        local service = PartyService.bind({
+            party_context = 'PVE_MAIN',
+            owned_character_ids = {
+                char_hero = true,
+                char_ally = true,
+            },
+            party_store = store.value,
+            save_bridge = bridge.value,
+        })
+        assert.equal(service.ok, true)
+
+        local committed = service.value:commit_formation({
+            member_rows = members_two(),
+            leader_character_id = 'char_hero',
+            expected_revision = 0,
+            player_save_scope = 'player_party_preset_001',
+            request_id = 'request_party_preset_commit',
+        })
+        assert.equal(committed.ok, true, committed.error and committed.error.code)
+
+        local saved = service.value:save_preset({
+            preset_id = 'preset_party_persisted',
+            display_name = '存档',
+            member_rows = members_two(),
+            leader_character_id = 'char_hero',
+            player_save_scope = 'player_party_preset_001',
+            request_id = 'request_party_preset_save',
+        })
+        assert.equal(saved.ok, true, saved.error and saved.error.code)
+        assert.equal(saved.value.save.status, 'COMMITTED')
+
+        local loaded = load.value:load({
+            player_ref = 'player_party_preset_001',
+            session_instance_id = 'session_party_preset_1',
+            request_id = 'request_load_party_preset_1',
+        }, invoke)
+        assert.equal(loaded.ok, true, loaded.error and loaded.error.code)
+        assert.equal(
+            #loaded.value.loaded_envelopes[3].payload.preset_header_rows,
+            1
+        )
+        assert.equal(
+            loaded.value.loaded_envelopes[3].payload.preset_header_rows[1].preset_id,
+            'preset_party_persisted'
+        )
+
+        local fresh_store = FakePartyStore.new()
+        assert.equal(fresh_store.ok, true)
+        local hydrate = HydrateGameRuntime.bind({})
+        assert.equal(hydrate.ok, true)
+        local hydrated = hydrate.value:hydrate({
+            load_result = loaded.value,
+            player_save_scope = 'player_party_preset_001',
+            targets = {
+                party_store = fresh_store.value,
+            },
+        })
+        assert.equal(hydrated.ok, true, hydrated.error and hydrated.error.code)
+
+        local resumed = PartyService.bind({
+            party_context = 'PVE_MAIN',
+            owned_character_ids = {
+                char_hero = true,
+                char_ally = true,
+            },
+            party_store = fresh_store.value,
+        })
+        assert.equal(resumed.ok, true)
+        local listed = resumed.value:list_presets()
+        assert.equal(listed.ok, true)
+        assert.equal(#listed.value, 1)
+        assert.equal(listed.value[1].preset_id, 'preset_party_persisted')
+        assert.equal(listed.value[1].display_name, '存档')
     end),
 }

@@ -1,5 +1,5 @@
 -- System 03 slot-3 party formation save codec.
--- Flat sections only: headers, members, empty preset placeholders.
+-- Flat sections: party headers/members + preset headers/members.
 -- Does not store combat stats, engine unit handles, or nested 3x3 grids.
 
 local Ordered = require 'wzx.domain.common.ordered'
@@ -7,6 +7,7 @@ local PartyErrorCodes = require 'wzx.domain.party.error_codes'
 local Result = require 'wzx.domain.common.result'
 local RuntimeId = require 'wzx.domain.common.runtime_id'
 local TableShape = require 'wzx.domain.common.table_shape'
+local Utf8Text = require 'wzx.domain.character.utf8_text'
 
 local PartySaveCodec = {}
 local bytewise_string_less = Ordered.bytewise_string_less
@@ -17,10 +18,13 @@ local result_ok = Result.ok
 local table_sort = table.sort
 local type_value = type
 local validate_content = RuntimeId.validate_content
+local utf8_is_valid = Utf8Text.is_valid
 
 local CURRENT_SCHEMA_VERSION = 1
 local MAX_CONTEXTS = 3
 local MAX_MEMBERS = 4
+local MAX_PRESETS_PER_CONTEXT = 5
+local MAX_DISPLAY_NAME_CODEPOINTS = 12
 local MAX_SAFE_INTEGER = 9007199254740991
 
 local CONTEXTS = {
@@ -55,9 +59,26 @@ local MEMBER_FIELDS = {
     entry_order = true,
     role_tag_override = true,
 }
+local PRESET_HEADER_FIELDS = {
+    preset_id = true,
+    party_context = true,
+    display_name = true,
+    leader_character_id = true,
+    formation_template_id = true,
+    revision = true,
+    protected = true,
+}
+local PRESET_MEMBER_FIELDS = {
+    preset_id = true,
+    character_id = true,
+    position_index = true,
+    entry_order = true,
+    role_tag_override = true,
+}
 local SNAPSHOT_FIELDS = {
     party_save_revision = true,
     parties = true,
+    presets = true,
 }
 
 local function failure(code, message_key, reason, details)
@@ -112,6 +133,23 @@ local function member_less(left, right)
     return bytewise_string_less(left.character_id, right.character_id)
 end
 
+local function preset_header_less(left, right)
+    if left.party_context ~= right.party_context then
+        return bytewise_string_less(left.party_context, right.party_context)
+    end
+    return bytewise_string_less(left.preset_id, right.preset_id)
+end
+
+local function preset_member_less(left, right)
+    if left.preset_id ~= right.preset_id then
+        return bytewise_string_less(left.preset_id, right.preset_id)
+    end
+    if left.position_index ~= right.position_index then
+        return left.position_index < right.position_index
+    end
+    return bytewise_string_less(left.character_id, right.character_id)
+end
+
 local function copy_party(party)
     local members = {}
     local index
@@ -135,6 +173,30 @@ local function copy_party(party)
     }
 end
 
+local function copy_preset(preset)
+    local members = {}
+    local index
+    for index = 1, #preset.member_rows do
+        local row = preset.member_rows[index]
+        members[index] = {
+            character_id = row.character_id,
+            position_index = row.position_index,
+            entry_order = row.entry_order,
+            role_tag_override = row.role_tag_override,
+        }
+    end
+    return {
+        preset_id = preset.preset_id,
+        party_context = preset.party_context,
+        display_name = preset.display_name or '',
+        leader_character_id = preset.leader_character_id,
+        member_rows = members,
+        formation_template_id = preset.formation_template_id,
+        revision = preset.revision,
+        protected = preset.protected == true,
+    }
+end
+
 function PartySaveCodec.encode(snapshot)
     local err = no_unknown_fields(snapshot, SNAPSHOT_FIELDS, '$')
     if err ~= nil then
@@ -155,6 +217,14 @@ function PartySaveCodec.encode(snapshot)
             count = #snapshot.parties,
             max_contexts = MAX_CONTEXTS,
         })
+    end
+
+    local presets = snapshot.presets
+    if presets == nil then
+        presets = {}
+    end
+    if type_value(presets) ~= 'table' or not Ordered.is_dense_array(presets) then
+        return invalid('PRESETS_DENSE_ARRAY_REQUIRED', { field = 'presets' })
     end
 
     local headers = {}
@@ -280,8 +350,151 @@ function PartySaveCodec.encode(snapshot)
         end
     end
 
+    local preset_headers = {}
+    local preset_members = {}
+    local seen_presets = {}
+    local context_counts = {}
+    for index = 1, #presets do
+        local preset = presets[index]
+        if type_value(preset) ~= 'table' then
+            return invalid('PRESET_ROW_TABLE_REQUIRED', {
+                field = 'presets[' .. tostring(index) .. ']',
+            })
+        end
+        local preset_id = preset.preset_id
+        local checked_id = validate_content(
+            preset_id,
+            'preset_party_',
+            'preset_id'
+        )
+        if not checked_id.ok then
+            return invalid('PRESET_ID_INVALID', {
+                field = 'presets[' .. tostring(index) .. '].preset_id',
+            })
+        end
+        if seen_presets[preset_id] then
+            return invalid('DUPLICATE_PRESET_ID', { preset_id = preset_id })
+        end
+        seen_presets[preset_id] = true
+        local context = preset.party_context
+        if CONTEXTS[context] ~= true then
+            return invalid('PARTY_CONTEXT_INVALID', {
+                party_context = context,
+                preset_id = preset_id,
+            })
+        end
+        context_counts[context] = (context_counts[context] or 0) + 1
+        if context_counts[context] > MAX_PRESETS_PER_CONTEXT then
+            return invalid('PRESET_LIMIT_EXCEEDED', {
+                party_context = context,
+                limit = MAX_PRESETS_PER_CONTEXT,
+            })
+        end
+        if type_value(preset.display_name) ~= 'string' then
+            return invalid('PRESET_DISPLAY_NAME_REQUIRED', {
+                preset_id = preset_id,
+            })
+        end
+        local name_ok = utf8_is_valid(
+            preset.display_name,
+            MAX_DISPLAY_NAME_CODEPOINTS
+        )
+        if not name_ok then
+            return invalid('PRESET_DISPLAY_NAME_INVALID', {
+                preset_id = preset_id,
+            })
+        end
+        if not is_integer(preset.revision, 0, MAX_SAFE_INTEGER) then
+            return invalid('PRESET_REVISION_INVALID', {
+                preset_id = preset_id,
+            })
+        end
+        local leader_checked = validate_content(
+            preset.leader_character_id,
+            'char_',
+            'leader_character_id'
+        )
+        if not leader_checked.ok then
+            return invalid('PRESET_LEADER_ID_INVALID', {
+                preset_id = preset_id,
+            })
+        end
+        if preset.formation_template_id ~= nil then
+            local template_checked = validate_content(
+                preset.formation_template_id,
+                'formation_',
+                'formation_template_id'
+            )
+            if not template_checked.ok then
+                return invalid('PRESET_FORMATION_TEMPLATE_ID_INVALID', {
+                    preset_id = preset_id,
+                })
+            end
+        end
+        if type_value(preset.member_rows) ~= 'table'
+            or not Ordered.is_dense_array(preset.member_rows)
+        then
+            return invalid('PRESET_MEMBER_ROWS_REQUIRED', {
+                preset_id = preset_id,
+            })
+        end
+        if #preset.member_rows < 1 or #preset.member_rows > MAX_MEMBERS then
+            return invalid('PRESET_SIZE_OUT_OF_RANGE', {
+                preset_id = preset_id,
+                count = #preset.member_rows,
+            })
+        end
+
+        preset_headers[#preset_headers + 1] = {
+            preset_id = preset_id,
+            party_context = context,
+            display_name = preset.display_name,
+            leader_character_id = preset.leader_character_id,
+            formation_template_id = preset.formation_template_id,
+            revision = preset.revision,
+            protected = preset.protected == true,
+        }
+
+        local member_index
+        for member_index = 1, #preset.member_rows do
+            local row = preset.member_rows[member_index]
+            local checked = validate_content(
+                row.character_id,
+                'char_',
+                'character_id'
+            )
+            if not checked.ok then
+                return invalid('PRESET_CHARACTER_ID_INVALID', {
+                    preset_id = preset_id,
+                    index = member_index,
+                })
+            end
+            if not is_integer(row.position_index, 0, 8) then
+                return invalid('PRESET_POSITION_INDEX_INVALID', {
+                    preset_id = preset_id,
+                    index = member_index,
+                })
+            end
+            if not is_integer(row.entry_order, 1, MAX_MEMBERS) then
+                return invalid('PRESET_ENTRY_ORDER_INVALID', {
+                    preset_id = preset_id,
+                    index = member_index,
+                })
+            end
+            preset_members[#preset_members + 1] = {
+                preset_id = preset_id,
+                character_id = row.character_id,
+                position_index = row.position_index,
+                entry_order = row.entry_order,
+                role_tag_override = row.role_tag_override,
+            }
+        end
+    end
+
     table_sort(headers, context_less)
     table_sort(members, member_less)
+    table_sort(preset_headers, preset_header_less)
+    table_sort(preset_members, preset_member_less)
 
     return result_ok({
         party_metadata = {
@@ -290,9 +503,8 @@ function PartySaveCodec.encode(snapshot)
         },
         party_header_rows = headers,
         party_member_rows = members,
-        -- Presets are owned by system 03 but not implemented in this offline slice.
-        preset_header_rows = {},
-        preset_member_rows = {},
+        preset_header_rows = preset_headers,
+        preset_member_rows = preset_members,
     })
 end
 
@@ -342,13 +554,6 @@ function PartySaveCodec.decode(bundle)
     then
         return invalid('PRESET_MEMBER_ROWS_REQUIRED', {
             field = 'preset_member_rows',
-        })
-    end
-    -- Offline V1: reject non-empty presets until preset aggregate lands.
-    if #bundle.preset_header_rows > 0 or #bundle.preset_member_rows > 0 then
-        return invalid('PRESETS_UNSUPPORTED', {
-            preset_header_count = #bundle.preset_header_rows,
-            preset_member_count = #bundle.preset_member_rows,
         })
     end
     if #bundle.party_header_rows > MAX_CONTEXTS then
@@ -496,7 +701,6 @@ function PartySaveCodec.decode(bundle)
         }
     end
 
-    -- Orphan member rows without a header fail closed.
     local context
     for context in raw_next, members_by_context do
         if not seen[context] then
@@ -506,14 +710,199 @@ function PartySaveCodec.decode(bundle)
         end
     end
 
+    local members_by_preset = {}
+    for index = 1, #bundle.preset_member_rows do
+        local row = bundle.preset_member_rows[index]
+        err = no_unknown_fields(
+            row,
+            PRESET_MEMBER_FIELDS,
+            'preset_member_rows[' .. tostring(index) .. ']'
+        )
+        if err ~= nil then
+            return err
+        end
+        local checked_id = validate_content(
+            row.preset_id,
+            'preset_party_',
+            'preset_id'
+        )
+        if not checked_id.ok then
+            return invalid('PRESET_ID_INVALID', {
+                field = 'preset_member_rows[' .. tostring(index) .. '].preset_id',
+            })
+        end
+        local checked = validate_content(row.character_id, 'char_', 'character_id')
+        if not checked.ok then
+            return invalid('PRESET_CHARACTER_ID_INVALID', {
+                field = 'preset_member_rows[' .. tostring(index) .. '].character_id',
+            })
+        end
+        if not is_integer(row.position_index, 0, 8) then
+            return invalid('PRESET_POSITION_INDEX_INVALID', {
+                field = 'preset_member_rows[' .. tostring(index) .. '].position_index',
+            })
+        end
+        if not is_integer(row.entry_order, 1, MAX_MEMBERS) then
+            return invalid('PRESET_ENTRY_ORDER_INVALID', {
+                field = 'preset_member_rows[' .. tostring(index) .. '].entry_order',
+            })
+        end
+        local list = members_by_preset[row.preset_id]
+        if list == nil then
+            list = {}
+            members_by_preset[row.preset_id] = list
+        end
+        list[#list + 1] = {
+            character_id = row.character_id,
+            position_index = row.position_index,
+            entry_order = row.entry_order,
+            role_tag_override = row.role_tag_override,
+        }
+    end
+
+    local presets = {}
+    local seen_presets = {}
+    local context_counts = {}
+    for index = 1, #bundle.preset_header_rows do
+        local row = bundle.preset_header_rows[index]
+        err = no_unknown_fields(
+            row,
+            PRESET_HEADER_FIELDS,
+            'preset_header_rows[' .. tostring(index) .. ']'
+        )
+        if err ~= nil then
+            return err
+        end
+        local checked_id = validate_content(
+            row.preset_id,
+            'preset_party_',
+            'preset_id'
+        )
+        if not checked_id.ok then
+            return invalid('PRESET_ID_INVALID', {
+                field = 'preset_header_rows[' .. tostring(index) .. '].preset_id',
+            })
+        end
+        if seen_presets[row.preset_id] then
+            return invalid('DUPLICATE_PRESET_ID', {
+                preset_id = row.preset_id,
+            })
+        end
+        seen_presets[row.preset_id] = true
+        if CONTEXTS[row.party_context] ~= true then
+            return invalid('PARTY_CONTEXT_INVALID', {
+                party_context = row.party_context,
+                preset_id = row.preset_id,
+            })
+        end
+        context_counts[row.party_context] =
+            (context_counts[row.party_context] or 0) + 1
+        if context_counts[row.party_context] > MAX_PRESETS_PER_CONTEXT then
+            return invalid('PRESET_LIMIT_EXCEEDED', {
+                party_context = row.party_context,
+                limit = MAX_PRESETS_PER_CONTEXT,
+            })
+        end
+        if type_value(row.display_name) ~= 'string' then
+            return invalid('PRESET_DISPLAY_NAME_REQUIRED', {
+                preset_id = row.preset_id,
+            })
+        end
+        local name_ok = utf8_is_valid(
+            row.display_name,
+            MAX_DISPLAY_NAME_CODEPOINTS
+        )
+        if not name_ok then
+            return invalid('PRESET_DISPLAY_NAME_INVALID', {
+                preset_id = row.preset_id,
+            })
+        end
+        if not is_integer(row.revision, 0, MAX_SAFE_INTEGER) then
+            return invalid('PRESET_REVISION_INVALID', {
+                preset_id = row.preset_id,
+            })
+        end
+        if type_value(row.protected) ~= 'boolean' then
+            return invalid('PRESET_PROTECTED_BOOLEAN_REQUIRED', {
+                preset_id = row.preset_id,
+            })
+        end
+        local leader_checked = validate_content(
+            row.leader_character_id,
+            'char_',
+            'leader_character_id'
+        )
+        if not leader_checked.ok then
+            return invalid('PRESET_LEADER_ID_INVALID', {
+                preset_id = row.preset_id,
+            })
+        end
+        if row.formation_template_id ~= nil then
+            local template_checked = validate_content(
+                row.formation_template_id,
+                'formation_',
+                'formation_template_id'
+            )
+            if not template_checked.ok then
+                return invalid('PRESET_FORMATION_TEMPLATE_ID_INVALID', {
+                    preset_id = row.preset_id,
+                })
+            end
+        end
+        local member_rows = members_by_preset[row.preset_id] or {}
+        if #member_rows < 1 or #member_rows > MAX_MEMBERS then
+            return invalid('PRESET_SIZE_OUT_OF_RANGE', {
+                preset_id = row.preset_id,
+                count = #member_rows,
+            })
+        end
+        table_sort(member_rows, function(left, right)
+            if left.position_index ~= right.position_index then
+                return left.position_index < right.position_index
+            end
+            return bytewise_string_less(left.character_id, right.character_id)
+        end)
+        presets[#presets + 1] = {
+            preset_id = row.preset_id,
+            party_context = row.party_context,
+            display_name = row.display_name,
+            leader_character_id = row.leader_character_id,
+            formation_template_id = row.formation_template_id,
+            revision = row.revision,
+            protected = row.protected,
+            member_rows = member_rows,
+        }
+    end
+
+    local orphan_preset_id
+    for orphan_preset_id in raw_next, members_by_preset do
+        if not seen_presets[orphan_preset_id] then
+            return invalid('PRESET_MEMBER_MISSING_HEADER', {
+                preset_id = orphan_preset_id,
+            })
+        end
+    end
+
     table_sort(parties, context_less)
-    local copied = {}
+    table_sort(presets, function(left, right)
+        if left.party_context ~= right.party_context then
+            return bytewise_string_less(left.party_context, right.party_context)
+        end
+        return bytewise_string_less(left.preset_id, right.preset_id)
+    end)
+
+    local copied_parties = {}
     for index = 1, #parties do
-        copied[index] = copy_party(parties[index])
+        copied_parties[index] = copy_party(parties[index])
+    end
+    local copied_presets = {}
+    for index = 1, #presets do
+        copied_presets[index] = copy_preset(presets[index])
     end
     return result_ok({
         party_save_revision = meta.party_save_revision,
-        parties = copied,
+        parties = copied_parties,
+        presets = copied_presets,
     })
 end
 
