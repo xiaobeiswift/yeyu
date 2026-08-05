@@ -4,6 +4,8 @@ local CurrencyLedger = require 'wzx.domain.economy.currency_ledger'
 local EconomyErrorCodes = require 'wzx.domain.economy.error_codes'
 local EconomySaveBridge = require 'wzx.application.use_cases.economy.economy_save_bridge'
 local InventoryService = require 'wzx.application.use_cases.inventory.inventory_service'
+local LootCatalog = require 'wzx.config.schema.economy.loot_catalog'
+local LootRoller = require 'wzx.domain.economy.loot_roller'
 local PreparedReward = require 'wzx.domain.economy.prepared_reward'
 local Result = require 'wzx.domain.common.result'
 local RewardCatalog = require 'wzx.config.schema.reward.catalog'
@@ -129,6 +131,7 @@ function EconomyService.bind(options)
     end
     local currency_catalog = raw_get(options, 'currency_catalog')
     local reward_catalog = raw_get(options, 'reward_catalog')
+    local loot_catalog = raw_get(options, 'loot_catalog')
     local store = raw_get(options, 'store')
     local save_bridge = raw_get(options, 'save_bridge')
     local inventory_service = raw_get(options, 'inventory_service')
@@ -137,6 +140,9 @@ function EconomyService.bind(options)
     end
     if not RewardCatalog.is_authority(reward_catalog) then
         return invalid('REWARD_CATALOG_REQUIRED', { field = 'reward_catalog' })
+    end
+    if loot_catalog ~= nil and not LootCatalog.is_authority(loot_catalog) then
+        return invalid('LOOT_CATALOG_AUTHORITY_REQUIRED', { field = 'loot_catalog' })
     end
     if type_value(store) ~= 'table'
         or type_value(store.get_ledger) ~= 'function'
@@ -163,6 +169,7 @@ function EconomyService.bind(options)
     STATES[view] = {
         currency_catalog = currency_catalog,
         reward_catalog = reward_catalog,
+        loot_catalog = loot_catalog,
         store = store,
         save_bridge = save_bridge,
         inventory_service = inventory_service,
@@ -269,6 +276,113 @@ function Service:prepare_reward(input)
         return prepared
     end
     return result_ok(prepared.value)
+end
+
+--- Roll a loot table then expand each hit into currency/item leaves and prepare.
+--- Input: loot_id, root_seed, source_type, source_ref?, source_occurrence_id, overflow_policy?
+function Service:prepare_loot(input)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('SERVICE_AUTHORITY_REQUIRED')
+    end
+    if type_value(input) ~= 'table' or get_metatable(input) ~= nil then
+        return invalid('INPUT_TABLE_REQUIRED', { field = 'input' })
+    end
+    if state.loot_catalog == nil then
+        return invalid('LOOT_CATALOG_REQUIRED', { field = 'loot_catalog' })
+    end
+
+    local loot_id = raw_get(input, 'loot_id')
+    local root_seed = raw_get(input, 'root_seed')
+    local source_type = raw_get(input, 'source_type')
+    local source_ref = raw_get(input, 'source_ref')
+    local source_occurrence_id = raw_get(input, 'source_occurrence_id')
+    local overflow_policy = raw_get(input, 'overflow_policy')
+
+    local rolled = LootRoller.roll(state.loot_catalog, loot_id, {
+        root_seed = root_seed,
+        source_occurrence_id = source_occurrence_id,
+    })
+    if not rolled.ok then
+        return rolled
+    end
+
+    local hits = rolled.value.hits
+    if #hits == 0 then
+        return fail(
+            EconomyErrorCodes.ECONOMY_LOOT_EMPTY,
+            'LOOT_ROLL_PRODUCED_NO_HITS',
+            {
+                loot_id = loot_id,
+                source_occurrence_id = source_occurrence_id,
+            },
+            false
+        )
+    end
+
+    local leaves = {}
+    local hit_index
+    for hit_index = 1, #hits do
+        local hit = hits[hit_index]
+        local expanded = state.reward_catalog:expand_leaves(hit.reward_id)
+        if not expanded.ok then
+            return expanded
+        end
+        local leaf_index
+        for leaf_index = 1, #expanded.value do
+            leaves[#leaves + 1] = expanded.value[leaf_index]
+        end
+    end
+
+    local leaf_index
+    for leaf_index = 1, #leaves do
+        local leaf = leaves[leaf_index]
+        if leaf.entry_type == 'CURRENCY' then
+            local definition = state.currency_catalog:require(leaf.target_id)
+            if not definition.ok then
+                return definition
+            end
+        elseif leaf.entry_type == 'ITEM' then
+            if state.inventory_service == nil then
+                return fail(
+                    EconomyErrorCodes.ECONOMY_ENTRY_UNSUPPORTED,
+                    'ITEM_REQUIRES_INVENTORY_SERVICE',
+                    { target_id = leaf.target_id },
+                    false
+                )
+            end
+        end
+    end
+
+    if overflow_policy == nil then
+        overflow_policy = 'REJECT'
+    end
+
+    local prepared = PreparedReward.build({
+        source_type = source_type,
+        source_ref = source_ref or loot_id,
+        source_occurrence_id = source_occurrence_id,
+        config_version = rolled.value.config_version,
+        overflow_policy = overflow_policy,
+        seed_hash = rolled.value.seed_hash,
+        entries = leaves,
+    })
+    if not prepared.ok then
+        return prepared
+    end
+
+    return result_ok({
+        prepared = prepared.value,
+        loot = {
+            loot_id = rolled.value.loot_id,
+            hits = hits,
+            seed_hash = rolled.value.seed_hash,
+            config_version = rolled.value.config_version,
+            reward_context_id = rolled.value.reward_context_id,
+            seed = rolled.value.seed,
+            draw_count = rolled.value.draw_count,
+        },
+    })
 end
 
 local function build_result_hash(
