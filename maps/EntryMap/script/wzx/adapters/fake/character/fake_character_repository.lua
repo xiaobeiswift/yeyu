@@ -1566,6 +1566,159 @@ function FakeCharacterRepository.new(options)
         return copy_or_error(authority, '$authority.snapshot')
     end
 
+    -- Offline load path: replace one player's authority from decoded save rows.
+    -- Does not go through the write port; used only by HydrateGameRuntime.
+    port.import_player_from_save = function(_, input)
+        if type(input) ~= 'table' or getmetatable(input) ~= nil then
+            return PortContract.error('FAKE_IMPORT_INVALID', {
+                reason = 'INPUT_TABLE_REQUIRED',
+            }, false)
+        end
+        local scope = rawget(input, 'player_save_scope')
+        if type(scope) ~= 'string' or scope == '' then
+            return PortContract.error('FAKE_IMPORT_INVALID', {
+                reason = 'PLAYER_SAVE_SCOPE_INVALID',
+            }, false)
+        end
+        local revision = rawget(input, 'revision')
+        if not is_non_negative_integer(revision) then
+            return PortContract.error('FAKE_IMPORT_INVALID', {
+                reason = 'REVISION_INVALID',
+            }, false)
+        end
+        local receipt_save_revision = rawget(input, 'receipt_save_revision')
+        if receipt_save_revision == nil then
+            receipt_save_revision = 0
+        end
+        if not is_non_negative_integer(receipt_save_revision) then
+            return PortContract.error('FAKE_IMPORT_INVALID', {
+                reason = 'RECEIPT_SAVE_REVISION_INVALID',
+            }, false)
+        end
+        local character_states = rawget(input, 'character_states')
+        if type(character_states) ~= 'table' then
+            return PortContract.error('FAKE_IMPORT_INVALID', {
+                reason = 'CHARACTER_STATES_REQUIRED',
+            }, false)
+        end
+        if not dense_array(character_states) then
+            return PortContract.error('FAKE_IMPORT_INVALID', {
+                reason = 'CHARACTER_STATES_NOT_DENSE',
+            }, false)
+        end
+
+        local player = empty_player(scope)
+        player.character_save_revision = revision
+        player.receipt_save_revision = receipt_save_revision
+        player.read_only = false
+
+        local index
+        for index = 1, #character_states do
+            local state = character_states[index]
+            if type(state) ~= 'table' or type(state.character_id) ~= 'string' then
+                return PortContract.error('FAKE_IMPORT_INVALID', {
+                    reason = 'CHARACTER_STATE_INVALID',
+                    index = index,
+                }, false)
+            end
+            if player.characters[state.character_id] ~= nil then
+                return PortContract.error('FAKE_IMPORT_INVALID', {
+                    reason = 'DUPLICATE_CHARACTER_ID',
+                    character_id = state.character_id,
+                }, false)
+            end
+            local load_value = {
+                status = 'FOUND',
+                player_save_scope = scope,
+                character_id = state.character_id,
+                character_save_revision = revision,
+                state = state,
+            }
+            if not result_is_valid('load_character', load_value, nil) then
+                return PortContract.error('FAKE_IMPORT_INVALID', {
+                    reason = 'CHARACTER_STATE_PORT_INVALID',
+                    character_id = state.character_id,
+                }, false)
+            end
+            player.characters[state.character_id] = copy_or_error(
+                state,
+                '$import.character'
+            )
+        end
+
+        -- Drop prior receipts owned by this scope so re-hydrate is deterministic.
+        local next_receipts = {}
+        local receipt_id
+        local transaction
+        receipt_id, transaction = raw_next(authority.receipts, nil)
+        while receipt_id ~= nil do
+            if transaction.player_save_scope ~= scope then
+                next_receipts[receipt_id] = transaction
+            end
+            receipt_id, transaction = raw_next(authority.receipts, receipt_id)
+        end
+
+        local receipt_rows = rawget(input, 'receipt_rows')
+        if receipt_rows == nil then
+            receipt_rows = {}
+        end
+        if type(receipt_rows) ~= 'table' or not dense_array(receipt_rows) then
+            return PortContract.error('FAKE_IMPORT_INVALID', {
+                reason = 'RECEIPT_ROWS_INVALID',
+            }, false)
+        end
+        for index = 1, #receipt_rows do
+            local row = receipt_rows[index]
+            if type(row) ~= 'table'
+                or type(row.receipt_id) ~= 'string'
+                or type(row.transaction_id) ~= 'string'
+                or type(row.operation_type) ~= 'string'
+            then
+                return PortContract.error('FAKE_IMPORT_INVALID', {
+                    reason = 'RECEIPT_ROW_INVALID',
+                    index = index,
+                }, false)
+            end
+            if next_receipts[row.receipt_id] ~= nil then
+                return PortContract.error('FAKE_IMPORT_INVALID', {
+                    reason = 'DUPLICATE_RECEIPT_ID',
+                    receipt_id = row.receipt_id,
+                }, false)
+            end
+            next_receipts[row.receipt_id] = {
+                status = row.status or 'COMMITTED',
+                transaction_id = row.transaction_id,
+                player_save_scope = scope,
+                request_key = row.transport_request_key,
+                receipt_id = row.receipt_id,
+                operation_type = row.operation_type,
+                command_digest = row.payload_hash,
+                command = {},
+                expected_character_save_revision =
+                    row.expected_character_save_revision,
+                character_save_revision =
+                    row.target_character_save_revision or revision,
+                receipt_save_revision = row.receipt_revision
+                    or receipt_save_revision,
+                character_revision = 0,
+                result_digest = row.result_digest
+                    or row.expected_result_digest,
+                result = {},
+                apply_count = 1,
+            }
+        end
+
+        authority.players[scope] = player
+        authority.receipts = next_receipts
+        return PortContract.ok({
+            player_save_scope = scope,
+            character_count = #character_states,
+            receipt_count = #receipt_rows,
+            character_save_revision = revision,
+            receipt_save_revision = receipt_save_revision,
+        })
+    end
+
     port.get_apply_count = function(_, receipt_id)
         local transaction = authority.receipts[receipt_id]
         if transaction == nil then

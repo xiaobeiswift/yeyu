@@ -45,6 +45,7 @@ return {
     'wzx.tests.test_save_coordinator',
     'wzx.tests.test_load_game_save',
     'wzx.tests.test_save_checkpoint_integration',
+    'wzx.tests.test_play_save_load_golden_path',
     'wzx.tests.test_character_build_and_save_bridge',
     'wzx.tests.test_bootstrap',
 }
