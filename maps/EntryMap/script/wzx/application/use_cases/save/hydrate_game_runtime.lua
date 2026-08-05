@@ -162,6 +162,14 @@ local CHARACTER_SLOT3_KEYS = {
     'character_talent_rows',
 }
 
+local PARTY_KEYS = {
+    'party_metadata',
+    'party_header_rows',
+    'party_member_rows',
+    'preset_header_rows',
+    'preset_member_rows',
+}
+
 local CHARACTER_SLOT5_KEYS = {
     'character_operation_metadata',
     'character_operation_receipts',
@@ -241,6 +249,37 @@ local function hydrate_world(targets, payload2, reports)
     end
     return finish_import(
         'world',
+        store:import_save_bundle(bundle.value),
+        reports
+    )
+end
+
+local function hydrate_party(targets, payload3, reports)
+    local bundle, saw = pick_sections(payload3, PARTY_KEYS)
+    if saw and not bundle.ok then
+        return bundle
+    end
+    if not saw then
+        reports[#reports + 1] = report_entry('party', 'SKIPPED', {
+            reason = 'SECTION_ABSENT',
+        })
+        return result_ok(true)
+    end
+    local store = raw_get(targets, 'party_store')
+    if store == nil then
+        reports[#reports + 1] = report_entry('party', 'SKIPPED', {
+            reason = 'TARGET_ABSENT',
+        })
+        return result_ok(true)
+    end
+    if type_value(store.import_save_bundle) ~= 'function' then
+        return invalid('TARGET_IMPORT_UNSUPPORTED', {
+            system_id = 'party',
+            method = 'import_save_bundle',
+        })
+    end
+    return finish_import(
+        'party',
         store:import_save_bundle(bundle.value),
         reports
     )
@@ -535,6 +574,10 @@ function Service:hydrate(input)
         return step
     end
     step = hydrate_world(targets, payload2, reports)
+    if not step.ok then
+        return step
+    end
+    step = hydrate_party(targets, payload3, reports)
     if not step.ok then
         return step
     end
