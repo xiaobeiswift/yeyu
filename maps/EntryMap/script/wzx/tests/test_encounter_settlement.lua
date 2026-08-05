@@ -7,6 +7,7 @@ local EncounterService = require 'wzx.application.use_cases.encounter.encounter_
 local EncounterErrorCodes = require 'wzx.domain.encounter.error_codes'
 local FakeEconomyStore = require 'wzx.adapters.fake.economy.fake_economy_store'
 local CombatAggregate = require 'wzx.domain.combat.combat_aggregate'
+local LootCatalog = require 'wzx.config.schema.economy.loot_catalog'
 local RewardCatalog = require 'wzx.config.schema.reward.catalog'
 
 local case = Harness.case
@@ -115,13 +116,106 @@ local function build_reward_catalog()
                     leaf(1, 'CURRENCY', 'currency_copper', 10),
                 },
             },
+            {
+                id = 'reward_loot_copper_25',
+                schema_version = 1,
+                entries = {
+                    leaf(1, 'CURRENCY', 'currency_copper', 25),
+                },
+            },
+            {
+                id = 'reward_loot_qi_2',
+                schema_version = 1,
+                entries = {
+                    leaf(1, 'CURRENCY', 'currency_true_qi', 2),
+                },
+            },
         },
     })
     assert.equal(built.ok, true)
     return built.value
 end
 
-local function build_encounter_catalog()
+local function build_loot_catalog()
+    local built = LootCatalog.build({
+        loot_tables = {
+            {
+                id = 'loot_ambush_first',
+                schema_version = 1,
+                roll_count = 1,
+                guaranteed_reward_id = 'reward_loot_copper_25',
+                group_ids = { 'lootgroup_ambush_first' },
+                config_version = 1,
+            },
+            {
+                id = 'loot_ambush_repeat',
+                schema_version = 1,
+                roll_count = 1,
+                guaranteed_reward_id = 'reward_loot_qi_2',
+                group_ids = { 'lootgroup_ambush_repeat' },
+                config_version = 1,
+            },
+        },
+        loot_groups = {
+            {
+                id = 'lootgroup_ambush_first',
+                schema_version = 1,
+                mode = 'GUARANTEED_ALL',
+                roll_count = 1,
+            },
+            {
+                id = 'lootgroup_ambush_repeat',
+                schema_version = 1,
+                mode = 'GUARANTEED_ALL',
+                roll_count = 1,
+            },
+        },
+        loot_entries = {
+            {
+                group_id = 'lootgroup_ambush_first',
+                entry_order = 1,
+                reward_id = 'reward_loot_qi_2',
+            },
+            {
+                group_id = 'lootgroup_ambush_repeat',
+                entry_order = 1,
+                reward_id = 'reward_loot_copper_25',
+            },
+        },
+    })
+    assert.equal(built.ok, true)
+    return built.value
+end
+
+local function build_encounter_catalog(overrides)
+    overrides = overrides or {}
+    local encounter_def = {
+        id = 'encounter_road_ambush',
+        schema_version = 1,
+        rules_version = 1,
+        encounter_type = 'NORMAL',
+        name_key = 'encounter.road_ambush.name',
+        description_key = 'encounter.road_ambush.desc',
+        area_id = 'area_wutan',
+        location_id = 'loc_road_01',
+        wave_ids = { 'wave_road_ambush_1' },
+        seed_policy = 'FIXED',
+        fixed_seed = 11,
+        first_clear_reward_bundle_id = 'reward_ambush_first',
+        repeat_reward_bundle_id = 'reward_ambush_repeat',
+        completion_fact_id = 'fact_road_ambush_cleared',
+    }
+    -- false means "explicitly clear optional field" (Lua cannot store nil keys).
+    local key
+    local value
+    for key, value in pairs(overrides) do
+        if value == false then
+            encounter_def[key] = nil
+        else
+            encounter_def[key] = value
+        end
+    end
+
     local sealed = EncounterCatalog.seal({
         enemy_stat_profiles = {
             {
@@ -201,22 +295,7 @@ local function build_encounter_catalog()
             },
         },
         encounter_definitions = {
-            {
-                id = 'encounter_road_ambush',
-                schema_version = 1,
-                rules_version = 1,
-                encounter_type = 'NORMAL',
-                name_key = 'encounter.road_ambush.name',
-                description_key = 'encounter.road_ambush.desc',
-                area_id = 'area_wutan',
-                location_id = 'loc_road_01',
-                wave_ids = { 'wave_road_ambush_1' },
-                seed_policy = 'FIXED',
-                fixed_seed = 11,
-                first_clear_reward_bundle_id = 'reward_ambush_first',
-                repeat_reward_bundle_id = 'reward_ambush_repeat',
-                completion_fact_id = 'fact_road_ambush_cleared',
-            },
+            encounter_def,
         },
     })
     assert.equal(sealed.ok, true)
@@ -264,21 +343,42 @@ local function hero_combatant()
     }
 end
 
-local function bind_stack()
+local function bind_stack(options)
+    options = options or {}
     local store = FakeEconomyStore.new()
     assert.equal(store.ok, true)
-    local economy = EconomyService.bind({
+    local economy_opts = {
         currency_catalog = build_currency_catalog(),
         reward_catalog = build_reward_catalog(),
         store = store.value,
-    })
+    }
+    if options.with_loot_catalog == true then
+        economy_opts.loot_catalog = build_loot_catalog()
+    end
+    local economy = EconomyService.bind(economy_opts)
     assert.equal(economy.ok, true)
     local encounter = EncounterService.bind({
-        catalog = build_encounter_catalog(),
+        catalog = build_encounter_catalog(options.encounter_overrides),
         economy_service = economy.value,
     })
     assert.equal(encounter.ok, true)
     return encounter.value, economy.value
+end
+
+--- Economy facade that only exposes prepare_reward / grant_prepared_reward
+--- so encounter settle can assert fail-closed when loot is configured.
+local function wrap_economy_without_prepare_loot(economy)
+    return {
+        prepare_reward = function(_, input)
+            return economy:prepare_reward(input)
+        end,
+        grant_prepared_reward = function(_, input)
+            return economy:grant_prepared_reward(input)
+        end,
+        get_balance = function(_, currency_id)
+            return economy:get_balance(currency_id)
+        end,
+    }
 end
 
 local function auto_finish(snapshot, combat_id)
@@ -472,5 +572,130 @@ return {
             settled.error.code,
             EncounterErrorCodes.ENCOUNTER_REWARD_SERVICE_REQUIRED
         )
+    end),
+
+    case('loot table settlement grants deterministic currency and is receipt-idempotent', function()
+        local service, economy = bind_stack({
+            with_loot_catalog = true,
+            encounter_overrides = {
+                -- Prefer loot over bundle; bundle remains present but unused.
+                first_clear_loot_table_id = 'loot_ambush_first',
+                first_clear_reward_bundle_id = 'reward_ambush_first',
+                repeat_loot_table_id = 'loot_ambush_repeat',
+                repeat_reward_bundle_id = 'reward_ambush_repeat',
+            },
+        })
+        local run = win_run(service, {
+            run_id = 'run_loot_first',
+            start_receipt_id = 'start_loot_first',
+        })
+        local receipt = make_settlement_receipt('loot_first')
+        local settled = service:settle(run, {
+            settlement_receipt_id = receipt,
+        })
+        assert.equal(settled.ok, true, 'settle loot first clear')
+        assert.equal(settled.value.plan.is_first_clear, true)
+        assert.equal(settled.value.plan.loot_table_id, 'loot_ambush_first')
+        assert.equal(settled.value.plan.reward_bundle_id, 'reward_ambush_first')
+        assert.equal(settled.value.plan.root_seed, 11)
+        assert.equal(settled.value.reward.status, 'COMMITTED')
+        assert.equal(settled.value.reward.loot_table_id, 'loot_ambush_first')
+        assert.equal(settled.value.reward.source_type, 'ENCOUNTER_FIRST_CLEAR')
+        assert.equal(settled.value.reward.source_occurrence_id, 'fc_encounter_road_ambush')
+        -- guaranteed copper 25 + group qi 2
+        local copper = economy:get_balance('currency_copper')
+        assert.equal(copper.ok, true)
+        assert.equal(copper.value.balance, 25)
+        local qi = economy:get_balance('currency_true_qi')
+        assert.equal(qi.ok, true)
+        assert.equal(qi.value.balance, 2)
+
+        local replay = service:settle(run, {
+            settlement_receipt_id = receipt,
+        })
+        assert.equal(replay.ok, true)
+        assert.equal(replay.value.idempotent, true)
+        copper = economy:get_balance('currency_copper')
+        assert.equal(copper.value.balance, 25)
+        qi = economy:get_balance('currency_true_qi')
+        assert.equal(qi.value.balance, 2)
+    end),
+
+    case('loot-only settlement is seed-reproducible across independent runs', function()
+        local service, economy = bind_stack({
+            with_loot_catalog = true,
+            encounter_overrides = {
+                first_clear_loot_table_id = 'loot_ambush_first',
+                first_clear_reward_bundle_id = false,
+                repeat_loot_table_id = 'loot_ambush_repeat',
+                repeat_reward_bundle_id = false,
+            },
+        })
+        local first = win_run(service, {
+            run_id = 'run_loot_seed_a',
+            start_receipt_id = 'start_loot_seed_a',
+            first_clear_already = true,
+        })
+        local settled_a = service:settle(first, {
+            settlement_receipt_id = make_settlement_receipt('loot_seed_a'),
+        })
+        assert.equal(settled_a.ok, true)
+        assert.equal(settled_a.value.plan.loot_table_id, 'loot_ambush_repeat')
+        assert.equal(settled_a.value.plan.reward_bundle_id, nil)
+        -- repeat loot: guaranteed qi 2 + group copper 25
+        assert.equal(economy:get_balance('currency_copper').value.balance, 25)
+        assert.equal(economy:get_balance('currency_true_qi').value.balance, 2)
+
+        local second = win_run(service, {
+            run_id = 'run_loot_seed_b',
+            start_receipt_id = 'start_loot_seed_b',
+            first_clear_already = true,
+        })
+        local settled_b = service:settle(second, {
+            settlement_receipt_id = make_settlement_receipt('loot_seed_b'),
+        })
+        assert.equal(settled_b.ok, true)
+        -- Same fixed seed + independent occurrence → same roll quantities, stacked.
+        assert.equal(economy:get_balance('currency_copper').value.balance, 50)
+        assert.equal(economy:get_balance('currency_true_qi').value.balance, 4)
+    end),
+
+    case('loot configured but economy lacks prepare_loot fails closed without bundle fallback', function()
+        local store = FakeEconomyStore.new()
+        assert.equal(store.ok, true)
+        local full_economy = EconomyService.bind({
+            currency_catalog = build_currency_catalog(),
+            reward_catalog = build_reward_catalog(),
+            loot_catalog = build_loot_catalog(),
+            store = store.value,
+        })
+        assert.equal(full_economy.ok, true)
+        local limited = wrap_economy_without_prepare_loot(full_economy.value)
+        local encounter = EncounterService.bind({
+            catalog = build_encounter_catalog({
+                first_clear_loot_table_id = 'loot_ambush_first',
+                first_clear_reward_bundle_id = 'reward_ambush_first',
+            }),
+            economy_service = limited,
+        })
+        assert.equal(encounter.ok, true)
+        local run = win_run(encounter.value, {
+            run_id = 'run_loot_no_api',
+            start_receipt_id = 'start_loot_no_api',
+        })
+        local settled = encounter.value:settle(run, {
+            settlement_receipt_id = make_settlement_receipt('loot_no_api'),
+        })
+        assert.equal(settled.ok, false)
+        assert.equal(
+            settled.error.code,
+            EncounterErrorCodes.ENCOUNTER_REWARD_GRANT_FAILED
+        )
+        assert.equal(settled.error.details.reason, 'PREPARE_LOOT_UNSUPPORTED')
+        assert.equal(settled.error.details.loot_table_id, 'loot_ambush_first')
+        -- Must not have granted the fixed bundle as silent fallback.
+        local copper = limited:get_balance('currency_copper')
+        assert.equal(copper.ok, true)
+        assert.equal(copper.value.balance, 0)
     end),
 }

@@ -40,6 +40,8 @@ local FIELDS = {
     retry_policy_id = true,
     first_clear_reward_bundle_id = true,
     repeat_reward_bundle_id = true,
+    first_clear_loot_table_id = true,
+    repeat_loot_table_id = true,
     world_result_set_id = true,
     completion_fact_id = true,
     combat_kind = true,
@@ -189,6 +191,20 @@ function EncounterDefinition.validate(value)
         ),
         validation_content_id(
             SCHEMA,
+            'first_clear_loot_table_id',
+            value.first_clear_loot_table_id,
+            'loot_',
+            true
+        ),
+        validation_content_id(
+            SCHEMA,
+            'repeat_loot_table_id',
+            value.repeat_loot_table_id,
+            'loot_',
+            true
+        ),
+        validation_content_id(
+            SCHEMA,
             'world_result_set_id',
             value.world_result_set_id,
             'worldset_',
@@ -298,6 +314,8 @@ function EncounterDefinition.validate(value)
         retry_policy_id = retry_policy_id,
         first_clear_reward_bundle_id = value.first_clear_reward_bundle_id,
         repeat_reward_bundle_id = value.repeat_reward_bundle_id,
+        first_clear_loot_table_id = value.first_clear_loot_table_id,
+        repeat_loot_table_id = value.repeat_loot_table_id,
         world_result_set_id = value.world_result_set_id,
         completion_fact_id = value.completion_fact_id,
         combat_kind = combat_kind,

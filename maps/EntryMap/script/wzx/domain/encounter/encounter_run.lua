@@ -597,6 +597,8 @@ function EncounterRun.prepare(catalog, input)
         completion_fact_id = encounter.completion_fact_id,
         first_clear_reward_bundle_id = encounter.first_clear_reward_bundle_id,
         repeat_reward_bundle_id = encounter.repeat_reward_bundle_id,
+        first_clear_loot_table_id = encounter.first_clear_loot_table_id,
+        repeat_loot_table_id = encounter.repeat_loot_table_id,
         result = nil,
         result_hash = nil,
         settlement_receipt_id = nil,
@@ -997,14 +999,24 @@ function EncounterRun.plan_settlement(run, settlement_receipt_id)
     local outcome = run.result.outcome
     local is_victory = VICTORY_OUTCOMES[outcome] == true
     local is_first_clear = is_victory and not run.first_clear_already
+    -- Settlement reward priority (documented for consumers):
+    -- 1. loot_table_id (first_clear / repeat) if non-nil → prepare_loot path
+    -- 2. else reward_bundle_id if non-nil → prepare_reward path
+    -- 3. both nil → no grant (grants_normal_reward = false)
+    -- Loot must not silently fall back to bundle when economy lacks prepare_loot.
     local reward_bundle_id = nil
+    local loot_table_id = nil
     if is_victory then
         if is_first_clear then
+            loot_table_id = run.first_clear_loot_table_id
             reward_bundle_id = run.first_clear_reward_bundle_id
         else
+            loot_table_id = run.repeat_loot_table_id
             reward_bundle_id = run.repeat_reward_bundle_id
         end
     end
+    local has_loot = loot_table_id ~= nil
+    local has_bundle = reward_bundle_id ~= nil
 
     local plan = {
         run_id = run.run_id,
@@ -1013,11 +1025,14 @@ function EncounterRun.plan_settlement(run, settlement_receipt_id)
         outcome = outcome,
         is_victory = is_victory,
         is_first_clear = is_first_clear,
+        loot_table_id = loot_table_id,
         reward_bundle_id = reward_bundle_id,
+        -- Root seed for deterministic loot; always present on a prepared run.
+        root_seed = run.seed,
         completion_fact_id = is_victory and run.completion_fact_id or nil,
         result_hash = run.result_hash,
         rules_version = run.rules_version,
-        grants_normal_reward = is_victory and reward_bundle_id ~= nil,
+        grants_normal_reward = is_victory and (has_loot or has_bundle),
         waves_cleared = #run.cleared_wave_ids,
         wave_count = run.wave_count,
     }

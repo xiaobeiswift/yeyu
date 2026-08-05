@@ -210,27 +210,93 @@ end
 
 local function grant_settlement_reward(economy_service, plan, input)
     local identities = build_reward_source(plan)
-    local prepared = economy_service:prepare_reward({
-        reward_id = plan.reward_bundle_id,
-        source_type = identities.source_type,
-        source_ref = plan.reward_bundle_id,
-        source_occurrence_id = identities.source_occurrence_id,
-        overflow_policy = raw_get(input, 'overflow_policy'),
-    })
-    if not prepared.ok then
-        return fail(
-            EncounterErrorCodes.ENCOUNTER_REWARD_GRANT_FAILED,
-            'PREPARE_REWARD_FAILED',
-            {
-                cause_code = prepared.error and prepared.error.code or 'UNKNOWN',
-                reward_bundle_id = plan.reward_bundle_id,
-            },
-            prepared.error and prepared.error.retryable == true
-        )
+    local prepared_payload
+    local prepared_id
+    local entry_count
+    local loot_meta = nil
+
+    -- Priority: loot_table_id → prepare_loot; else reward_bundle_id → prepare_reward.
+    -- When loot is configured, never silently fall back to bundle.
+    if plan.loot_table_id ~= nil then
+        if type_value(economy_service.prepare_loot) ~= 'function' then
+            return fail(
+                EncounterErrorCodes.ENCOUNTER_REWARD_GRANT_FAILED,
+                'PREPARE_LOOT_UNSUPPORTED',
+                {
+                    loot_table_id = plan.loot_table_id,
+                    reward_bundle_id = plan.reward_bundle_id,
+                },
+                false
+            )
+        end
+        local root_seed = plan.root_seed
+        if root_seed == nil then
+            root_seed = raw_get(input, 'root_seed')
+        end
+        if root_seed == nil then
+            return fail(
+                EncounterErrorCodes.ENCOUNTER_REWARD_GRANT_FAILED,
+                'ROOT_SEED_REQUIRED_FOR_LOOT',
+                {
+                    loot_table_id = plan.loot_table_id,
+                },
+                false
+            )
+        end
+        local prepared = economy_service:prepare_loot({
+            loot_id = plan.loot_table_id,
+            root_seed = root_seed,
+            source_type = identities.source_type,
+            source_ref = plan.loot_table_id,
+            source_occurrence_id = identities.source_occurrence_id,
+            overflow_policy = raw_get(input, 'overflow_policy'),
+        })
+        if not prepared.ok then
+            return fail(
+                EncounterErrorCodes.ENCOUNTER_REWARD_GRANT_FAILED,
+                'PREPARE_LOOT_FAILED',
+                {
+                    cause_code = prepared.error and prepared.error.code or 'UNKNOWN',
+                    cause_reason = prepared.error
+                        and prepared.error.details
+                        and prepared.error.details.reason
+                        or nil,
+                    loot_table_id = plan.loot_table_id,
+                },
+                prepared.error and prepared.error.retryable == true
+            )
+        end
+        -- prepare_loot wraps PreparedReward under .prepared and attaches .loot.
+        prepared_payload = prepared.value.prepared
+        prepared_id = prepared_payload.prepared_id
+        entry_count = #prepared_payload.entries
+        loot_meta = prepared.value.loot
+    else
+        local prepared = economy_service:prepare_reward({
+            reward_id = plan.reward_bundle_id,
+            source_type = identities.source_type,
+            source_ref = plan.reward_bundle_id,
+            source_occurrence_id = identities.source_occurrence_id,
+            overflow_policy = raw_get(input, 'overflow_policy'),
+        })
+        if not prepared.ok then
+            return fail(
+                EncounterErrorCodes.ENCOUNTER_REWARD_GRANT_FAILED,
+                'PREPARE_REWARD_FAILED',
+                {
+                    cause_code = prepared.error and prepared.error.code or 'UNKNOWN',
+                    reward_bundle_id = plan.reward_bundle_id,
+                },
+                prepared.error and prepared.error.retryable == true
+            )
+        end
+        prepared_payload = prepared.value
+        prepared_id = prepared_payload.prepared_id
+        entry_count = #prepared_payload.entries
     end
 
     local granted = economy_service:grant_prepared_reward({
-        prepared = prepared.value,
+        prepared = prepared_payload,
         receipt_id = plan.settlement_receipt_id,
         purpose_type = identities.purpose_type,
         purpose_ref = plan.encounter_id,
@@ -248,6 +314,7 @@ local function grant_settlement_reward(economy_service, plan, input)
             {
                 cause_code = granted.error and granted.error.code or 'UNKNOWN',
                 reward_bundle_id = plan.reward_bundle_id,
+                loot_table_id = plan.loot_table_id,
                 settlement_receipt_id = plan.settlement_receipt_id,
             },
             granted.error and granted.error.retryable == true
@@ -264,15 +331,18 @@ local function grant_settlement_reward(economy_service, plan, input)
         source_type = identities.source_type,
         source_occurrence_id = identities.source_occurrence_id,
         reward_bundle_id = plan.reward_bundle_id,
-        prepared_id = prepared.value.prepared_id,
-        entry_count = #prepared.value.entries,
+        loot_table_id = plan.loot_table_id,
+        prepared_id = prepared_id,
+        entry_count = entry_count,
+        loot = loot_meta,
         save = granted.value.save,
     })
 end
 
 --- Settle a terminal encounter run and grant rewards through economy when due.
--- Victory with reward_bundle_id requires a bound economy_service.
--- Defeat / abandon / no-bundle victory skip economy and still complete.
+-- Victory with loot_table_id or reward_bundle_id requires a bound economy_service.
+-- Loot path: prepare_loot then grant; bundle path: prepare_reward then grant.
+-- Defeat / abandon / no-reward victory skip economy and still complete.
 -- On victory, optional progress_store records first_clear/completion facts.
 function Service:settle(run, input)
     local state = STATES[self]
@@ -331,6 +401,7 @@ function Service:settle(run, input)
                 EncounterErrorCodes.ENCOUNTER_REWARD_SERVICE_REQUIRED,
                 'ECONOMY_SERVICE_REQUIRED_FOR_REWARD',
                 {
+                    loot_table_id = plan.loot_table_id,
                     reward_bundle_id = plan.reward_bundle_id,
                     is_first_clear = plan.is_first_clear,
                 },
@@ -346,6 +417,7 @@ function Service:settle(run, input)
         reward_result = {
             status = 'SKIPPED',
             reason = plan.is_victory and 'NO_REWARD_BUNDLE' or 'NOT_VICTORY',
+            loot_table_id = plan.loot_table_id,
             reward_bundle_id = plan.reward_bundle_id,
         }
     end
