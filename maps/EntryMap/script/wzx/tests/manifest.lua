@@ -37,6 +37,8 @@ return {
     'wzx.tests.test_encounter_progress',
     'wzx.tests.test_boss_phase',
     'wzx.tests.test_quest_system',
+    'wzx.tests.test_quest_chapter_01_content',
+    'wzx.tests.test_chapter_01_content_packs',
     'wzx.tests.test_encounter_quest_bridge',
     'wzx.tests.test_dialogue_system',
     'wzx.tests.test_world_system',
