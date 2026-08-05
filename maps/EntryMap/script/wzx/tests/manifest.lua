@@ -26,6 +26,7 @@ return {
     'wzx.tests.test_inventory_stacks',
     'wzx.tests.test_economy_prepare_and_grant',
     'wzx.tests.test_party_formation',
+    'wzx.tests.test_party_receipts',
     'wzx.tests.test_martial_system',
     'wzx.tests.test_equipment_system',
     'wzx.tests.test_effect_system',

@@ -38,6 +38,20 @@ local DEFINITIONS = {
         validator_id = 'validator_preset_member_rows_v1',
         codec_id = 'codec_party_save_bundle_v1',
     },
+    {
+        section_key = 'party_operation_metadata',
+        section_path = 'party_operation_metadata',
+        slot_id = 5,
+        validator_id = 'validator_party_operation_metadata_v1',
+        codec_id = 'codec_party_receipt_bundle_v1',
+    },
+    {
+        section_key = 'party_operation_receipts',
+        section_path = 'party_operation_receipts',
+        slot_id = 5,
+        validator_id = 'validator_party_operation_receipts_v1',
+        codec_id = 'codec_party_receipt_bundle_v1',
+    },
 }
 
 local function definition_copy(source)

@@ -220,7 +220,7 @@ return {
         assert.equal(decoded.value.parties[1].formation_template_id, 'formation_default')
     end),
 
-    case('section registrar installs slot-3 party sections', function()
+    case('section registrar installs slot-3 party and slot-5 receipt sections', function()
         local owners = SectionOwnerRegistry.new()
         assert.equal(owners.ok, true)
         local registered = PartySectionRegistrar.register({
@@ -228,11 +228,18 @@ return {
             section_owners = owners.value,
         })
         assert.equal(registered.ok, true)
-        assert.equal(registered.value, 5)
+        assert.equal(registered.value, 7)
         local meta = owners.value:get('party_metadata')
         assert.equal(meta.ok, true)
         assert.equal(meta.value.slot_id, 3)
         assert.equal(meta.value.owner_system, '03')
+        local receipt_meta = owners.value:get('party_operation_metadata')
+        assert.equal(receipt_meta.ok, true)
+        assert.equal(receipt_meta.value.slot_id, 5)
+        assert.equal(receipt_meta.value.owner_system, '03')
+        local receipt_rows = owners.value:get('party_operation_receipts')
+        assert.equal(receipt_rows.ok, true)
+        assert.equal(receipt_rows.value.slot_id, 5)
     end),
 
     case('party store and save bridge checkpoint then hydrate resumes formation', function()

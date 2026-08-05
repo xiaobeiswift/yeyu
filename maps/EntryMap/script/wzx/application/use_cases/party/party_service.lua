@@ -1,18 +1,25 @@
+local CanonicalReceiptHashV1 = require 'wzx.domain.common.canonical_receipt_hash_v1'
 local Formation = require 'wzx.domain.contracts.formation'
+local Ordered = require 'wzx.domain.common.ordered'
 local PartyAggregate = require 'wzx.domain.party.party_aggregate'
 local PartyErrorCodes = require 'wzx.domain.party.error_codes'
 local PartyPreset = require 'wzx.domain.party.party_preset'
 local PartySaveBridge = require 'wzx.application.use_cases.party.party_save_bridge'
 local Result = require 'wzx.domain.common.result'
+local RuntimeId = require 'wzx.domain.common.runtime_id'
 
 local PartyService = {}
+local bytewise_string_less = Ordered.bytewise_string_less
+local canonical_derive = CanonicalReceiptHashV1.derive
 local error_value = error
 local get_metatable = getmetatable
 local raw_get = rawget
 local result_err = Result.err
 local result_ok = Result.ok
 local set_metatable = setmetatable
+local table_sort = table.sort
 local type_value = type
+local validate_derived = RuntimeId.validate_derived
 
 local Service = {}
 Service.__index = Service
@@ -153,6 +160,103 @@ local function allocate_preset_id(state)
         end
     end
     return invalid('PRESET_ID_ALLOCATION_EXHAUSTED')
+end
+
+local function members_fingerprint(member_rows)
+    if type_value(member_rows) ~= 'table' then
+        return ''
+    end
+    local rows = {}
+    local index
+    for index = 1, #member_rows do
+        local row = member_rows[index]
+        if type_value(row) == 'table' then
+            rows[#rows + 1] = {
+                character_id = tostring(raw_get(row, 'character_id') or ''),
+                position_index = tonumber(raw_get(row, 'position_index')) or 0,
+                entry_order = tonumber(raw_get(row, 'entry_order')) or 0,
+                role_tag_override = tostring(
+                    raw_get(row, 'role_tag_override') or ''
+                ),
+            }
+        end
+    end
+    table_sort(rows, function(left, right)
+        if left.position_index ~= right.position_index then
+            return left.position_index < right.position_index
+        end
+        return bytewise_string_less(left.character_id, right.character_id)
+    end)
+    local parts = {}
+    for index = 1, #rows do
+        local row = rows[index]
+        parts[index] = row.character_id
+            .. '@'
+            .. tostring(row.position_index)
+            .. '#'
+            .. tostring(row.entry_order)
+            .. ':'
+            .. row.role_tag_override
+    end
+    return table.concat(parts, '|')
+end
+
+local function store_supports_receipts(state)
+    return state.party_store ~= nil
+        and type_value(state.party_store.get_receipt) == 'function'
+        and type_value(state.party_store.put_committed_receipt) == 'function'
+end
+
+local function resolve_receipt_id(input)
+    local receipt_id = raw_get(input, 'receipt_id')
+    if receipt_id == nil then
+        return result_ok(nil)
+    end
+    local checked = validate_derived(receipt_id, 'receipt_id')
+    if not checked.ok then
+        return invalid('RECEIPT_ID_INVALID', { field = 'receipt_id' })
+    end
+    return result_ok(receipt_id)
+end
+
+local function receipt_conflict(receipt_id, expected_hash, actual_hash)
+    return fail(
+        PartyErrorCodes.PARTY_RECEIPT_CONFLICT,
+        'RECEIPT_PAYLOAD_MISMATCH',
+        {
+            receipt_id = receipt_id,
+            expected_request_hash = expected_hash,
+            actual_request_hash = actual_hash,
+        },
+        false
+    )
+end
+
+local function put_receipt_or_conflict(state, receipt_row, request_hash)
+    local stored = state.party_store:put_committed_receipt(receipt_row)
+    if not stored.ok then
+        return stored
+    end
+    if stored.value.already_present then
+        if stored.value.receipt ~= nil
+            and stored.value.receipt.request_hash == request_hash
+        then
+            return result_ok({
+                already_committed = true,
+                receipt = stored.value.receipt,
+            })
+        end
+        return fail(
+            PartyErrorCodes.PARTY_RECEIPT_CONFLICT,
+            'RECEIPT_STORE_CONFLICT',
+            { receipt_id = receipt_row.receipt_id },
+            false
+        )
+    end
+    return result_ok({
+        already_committed = false,
+        receipt = receipt_row,
+    })
 end
 
 local function maybe_persist_save(self, input)
@@ -346,6 +450,89 @@ function Service:commit_formation(input)
     if type_value(input) ~= 'table' or get_metatable(input) ~= nil then
         return invalid('INPUT_TABLE_REQUIRED', { field = 'input' })
     end
+
+    local receipt_id_result = resolve_receipt_id(input)
+    if not receipt_id_result.ok then
+        return receipt_id_result
+    end
+    local receipt_id = receipt_id_result.value
+    local use_receipt = receipt_id ~= nil and store_supports_receipts(state)
+    if receipt_id ~= nil and not store_supports_receipts(state) then
+        return invalid('RECEIPT_STORE_REQUIRED', { field = 'party_store' })
+    end
+
+    local request_hash = nil
+    if use_receipt then
+        local request = canonical_derive('party_commit_formation_request', {
+            { name = 'operation_type', type = 'STRING' },
+            { name = 'party_context', type = 'STRING' },
+            { name = 'leader_character_id', type = 'STRING' },
+            { name = 'formation_template_id', type = 'STRING' },
+            { name = 'active_preset_id', type = 'STRING' },
+            { name = 'clear_active_preset', type = 'BOOLEAN' },
+            { name = 'members_fingerprint', type = 'STRING' },
+        }, {
+            operation_type = 'COMMIT_FORMATION',
+            party_context = state.party_context,
+            leader_character_id = tostring(
+                raw_get(input, 'leader_character_id') or ''
+            ),
+            formation_template_id = tostring(
+                raw_get(input, 'formation_template_id') or ''
+            ),
+            active_preset_id = tostring(raw_get(input, 'active_preset_id') or ''),
+            clear_active_preset = raw_get(input, 'clear_active_preset') == true,
+            members_fingerprint = members_fingerprint(
+                raw_get(input, 'member_rows')
+            ),
+        })
+        if not request.ok then
+            return request
+        end
+        request_hash = request.value.digest
+
+        local existing = state.party_store:get_receipt(receipt_id)
+        if not existing.ok then
+            return existing
+        end
+        if existing.value ~= nil then
+            if existing.value.request_hash ~= request_hash
+                or existing.value.operation_type ~= 'COMMIT_FORMATION'
+                or existing.value.party_context ~= state.party_context
+            then
+                return receipt_conflict(
+                    receipt_id,
+                    existing.value.request_hash,
+                    request_hash
+                )
+            end
+            local save = maybe_persist_save(self, input)
+            if not save.ok then
+                return save
+            end
+            local loaded_existing = load_party(state)
+            if not loaded_existing.ok then
+                return loaded_existing
+            end
+            return result_ok({
+                status = 'COMMITTED',
+                already_committed = true,
+                receipt_id = receipt_id,
+                request_hash = existing.value.request_hash,
+                result_hash = existing.value.result_hash,
+                formation = loaded_existing.value,
+                revision = existing.value.formation_revision_after
+                    or loaded_existing.value.revision,
+                store = {
+                    persisted = true,
+                    party_save_revision =
+                        existing.value.party_save_revision_after,
+                },
+                save = save.value,
+            })
+        end
+    end
+
     local loaded = load_party(state)
     if not loaded.ok then
         return loaded
@@ -380,6 +567,74 @@ function Service:commit_formation(input)
     if not persisted.ok then
         return persisted
     end
+
+    if use_receipt then
+        local result = canonical_derive('party_commit_formation_result', {
+            { name = 'request_hash', type = 'STRING' },
+            { name = 'formation_revision_after', type = 'INTEGER' },
+            { name = 'party_save_revision_after', type = 'INTEGER' },
+            { name = 'active_preset_id', type = 'STRING' },
+        }, {
+            request_hash = request_hash,
+            formation_revision_after = committed.value.revision,
+            party_save_revision_after = persisted.value.party_save_revision or 0,
+            active_preset_id = tostring(committed.value.active_preset_id or ''),
+        })
+        if not result.ok then
+            return result
+        end
+        local receipt_row = {
+            receipt_id = receipt_id,
+            request_hash = request_hash,
+            result_hash = result.value.digest,
+            status = 'COMMITTED',
+            operation_type = 'COMMIT_FORMATION',
+            party_context = state.party_context,
+            party_save_revision_after = persisted.value.party_save_revision or 0,
+            formation_revision_after = committed.value.revision,
+        }
+        if committed.value.active_preset_id ~= nil then
+            receipt_row.active_preset_id = committed.value.active_preset_id
+        end
+        local put = put_receipt_or_conflict(state, receipt_row, request_hash)
+        if not put.ok then
+            return put
+        end
+        if put.value.already_committed then
+            local save = maybe_persist_save(self, input)
+            if not save.ok then
+                return save
+            end
+            return result_ok({
+                status = 'COMMITTED',
+                already_committed = true,
+                receipt_id = receipt_id,
+                request_hash = put.value.receipt.request_hash,
+                result_hash = put.value.receipt.result_hash,
+                formation = committed.value,
+                revision = put.value.receipt.formation_revision_after
+                    or committed.value.revision,
+                store = persisted.value,
+                save = save.value,
+            })
+        end
+        local save = maybe_persist_save(self, input)
+        if not save.ok then
+            return save
+        end
+        return result_ok({
+            status = 'COMMITTED',
+            already_committed = false,
+            receipt_id = receipt_id,
+            request_hash = request_hash,
+            result_hash = result.value.digest,
+            formation = committed.value,
+            revision = committed.value.revision,
+            store = persisted.value,
+            save = save.value,
+        })
+    end
+
     local save = maybe_persist_save(self, input)
     if not save.ok then
         return save
@@ -440,6 +695,17 @@ function Service:save_preset(input)
     if type_value(input) ~= 'table' or get_metatable(input) ~= nil then
         return invalid('INPUT_TABLE_REQUIRED', { field = 'input' })
     end
+
+    local receipt_id_result = resolve_receipt_id(input)
+    if not receipt_id_result.ok then
+        return receipt_id_result
+    end
+    local receipt_id = receipt_id_result.value
+    local use_receipt = receipt_id ~= nil and store_supports_receipts(state)
+    if receipt_id ~= nil and not store_supports_receipts(state) then
+        return invalid('RECEIPT_STORE_REQUIRED', { field = 'party_store' })
+    end
+
     local loaded_presets = load_presets_map(state)
     if not loaded_presets.ok then
         return loaded_presets
@@ -472,6 +738,75 @@ function Service:save_preset(input)
         end
     end
 
+    local request_hash = nil
+    if use_receipt then
+        local request = canonical_derive('party_save_preset_request', {
+            { name = 'operation_type', type = 'STRING' },
+            { name = 'party_context', type = 'STRING' },
+            { name = 'preset_id', type = 'STRING' },
+            { name = 'display_name', type = 'STRING' },
+            { name = 'leader_character_id', type = 'STRING' },
+            { name = 'formation_template_id', type = 'STRING' },
+            { name = 'members_fingerprint', type = 'STRING' },
+        }, {
+            operation_type = 'SAVE_PARTY_PRESET',
+            party_context = party_context,
+            preset_id = tostring(raw_get(input, 'preset_id') or ''),
+            display_name = tostring(raw_get(input, 'display_name') or ''),
+            leader_character_id = tostring(leader_character_id or ''),
+            formation_template_id = tostring(formation_template_id or ''),
+            members_fingerprint = members_fingerprint(member_rows),
+        })
+        if not request.ok then
+            return request
+        end
+        request_hash = request.value.digest
+
+        local existing = state.party_store:get_receipt(receipt_id)
+        if not existing.ok then
+            return existing
+        end
+        if existing.value ~= nil then
+            if existing.value.request_hash ~= request_hash
+                or existing.value.operation_type ~= 'SAVE_PARTY_PRESET'
+                or existing.value.party_context ~= party_context
+            then
+                return receipt_conflict(
+                    receipt_id,
+                    existing.value.request_hash,
+                    request_hash
+                )
+            end
+            local save = maybe_persist_save(self, input)
+            if not save.ok then
+                return save
+            end
+            local preset = loaded_presets.value[existing.value.preset_id]
+            local preset_copy = nil
+            if preset ~= nil then
+                local copied = PartyPreset.copy_preset(preset)
+                if copied.ok then
+                    preset_copy = copied.value
+                end
+            end
+            return result_ok({
+                status = 'SAVED',
+                already_committed = true,
+                receipt_id = receipt_id,
+                request_hash = existing.value.request_hash,
+                result_hash = existing.value.result_hash,
+                preset = preset_copy,
+                created = false,
+                store = {
+                    persisted = true,
+                    party_save_revision =
+                        existing.value.party_save_revision_after,
+                },
+                save = save.value,
+            })
+        end
+    end
+
     local save_input = {
         preset_id = raw_get(input, 'preset_id'),
         display_name = raw_get(input, 'display_name'),
@@ -500,6 +835,72 @@ function Service:save_preset(input)
     if not persisted.ok then
         return persisted
     end
+
+    if use_receipt then
+        local result = canonical_derive('party_save_preset_result', {
+            { name = 'request_hash', type = 'STRING' },
+            { name = 'preset_id', type = 'STRING' },
+            { name = 'preset_revision', type = 'INTEGER' },
+            { name = 'party_save_revision_after', type = 'INTEGER' },
+            { name = 'created', type = 'BOOLEAN' },
+        }, {
+            request_hash = request_hash,
+            preset_id = saved.value.preset.preset_id,
+            preset_revision = saved.value.preset.revision,
+            party_save_revision_after = persisted.value.party_save_revision or 0,
+            created = saved.value.created == true,
+        })
+        if not result.ok then
+            return result
+        end
+        local receipt_row = {
+            receipt_id = receipt_id,
+            request_hash = request_hash,
+            result_hash = result.value.digest,
+            status = 'COMMITTED',
+            operation_type = 'SAVE_PARTY_PRESET',
+            party_context = party_context,
+            party_save_revision_after = persisted.value.party_save_revision or 0,
+            preset_id = saved.value.preset.preset_id,
+        }
+        local put = put_receipt_or_conflict(state, receipt_row, request_hash)
+        if not put.ok then
+            return put
+        end
+        if put.value.already_committed then
+            local save = maybe_persist_save(self, input)
+            if not save.ok then
+                return save
+            end
+            return result_ok({
+                status = saved.value.status,
+                already_committed = true,
+                receipt_id = receipt_id,
+                request_hash = put.value.receipt.request_hash,
+                result_hash = put.value.receipt.result_hash,
+                preset = saved.value.preset,
+                created = saved.value.created,
+                store = persisted.value,
+                save = save.value,
+            })
+        end
+        local save = maybe_persist_save(self, input)
+        if not save.ok then
+            return save
+        end
+        return result_ok({
+            status = saved.value.status,
+            already_committed = false,
+            receipt_id = receipt_id,
+            request_hash = request_hash,
+            result_hash = result.value.digest,
+            preset = saved.value.preset,
+            created = saved.value.created,
+            store = persisted.value,
+            save = save.value,
+        })
+    end
+
     local save = maybe_persist_save(self, input)
     if not save.ok then
         return save
@@ -521,11 +922,81 @@ function Service:apply_preset(input)
     if type_value(input) ~= 'table' or get_metatable(input) ~= nil then
         return invalid('INPUT_TABLE_REQUIRED', { field = 'input' })
     end
+
+    local receipt_id_result = resolve_receipt_id(input)
+    if not receipt_id_result.ok then
+        return receipt_id_result
+    end
+    local receipt_id = receipt_id_result.value
+    local use_receipt = receipt_id ~= nil and store_supports_receipts(state)
+    if receipt_id ~= nil and not store_supports_receipts(state) then
+        return invalid('RECEIPT_STORE_REQUIRED', { field = 'party_store' })
+    end
+
+    local preset_id = raw_get(input, 'preset_id')
+    local request_hash = nil
+    if use_receipt then
+        local request = canonical_derive('party_apply_preset_request', {
+            { name = 'operation_type', type = 'STRING' },
+            { name = 'party_context', type = 'STRING' },
+            { name = 'preset_id', type = 'STRING' },
+        }, {
+            operation_type = 'APPLY_PARTY_PRESET',
+            party_context = state.party_context,
+            preset_id = tostring(preset_id or ''),
+        })
+        if not request.ok then
+            return request
+        end
+        request_hash = request.value.digest
+
+        local existing = state.party_store:get_receipt(receipt_id)
+        if not existing.ok then
+            return existing
+        end
+        if existing.value ~= nil then
+            if existing.value.request_hash ~= request_hash
+                or existing.value.operation_type ~= 'APPLY_PARTY_PRESET'
+                or existing.value.preset_id ~= preset_id
+            then
+                return receipt_conflict(
+                    receipt_id,
+                    existing.value.request_hash,
+                    request_hash
+                )
+            end
+            local save = maybe_persist_save(self, input)
+            if not save.ok then
+                return save
+            end
+            local loaded_existing = load_party(state)
+            if not loaded_existing.ok then
+                return loaded_existing
+            end
+            return result_ok({
+                status = 'APPLIED',
+                already_committed = true,
+                receipt_id = receipt_id,
+                request_hash = existing.value.request_hash,
+                result_hash = existing.value.result_hash,
+                formation = loaded_existing.value,
+                preset = nil,
+                revision = existing.value.formation_revision_after
+                    or loaded_existing.value.revision,
+                store = {
+                    persisted = true,
+                    party_save_revision =
+                        existing.value.party_save_revision_after,
+                },
+                save = save.value,
+            })
+        end
+    end
+
     local loaded_presets = load_presets_map(state)
     if not loaded_presets.ok then
         return loaded_presets
     end
-    local preset_id = raw_get(input, 'preset_id')
     local preset = loaded_presets.value[preset_id]
     if preset == nil then
         return fail(
@@ -556,6 +1027,76 @@ function Service:apply_preset(input)
     if not persisted.ok then
         return persisted
     end
+
+    if use_receipt then
+        local result = canonical_derive('party_apply_preset_result', {
+            { name = 'request_hash', type = 'STRING' },
+            { name = 'preset_id', type = 'STRING' },
+            { name = 'formation_revision_after', type = 'INTEGER' },
+            { name = 'party_save_revision_after', type = 'INTEGER' },
+        }, {
+            request_hash = request_hash,
+            preset_id = preset_id,
+            formation_revision_after = applied.value.party.revision,
+            party_save_revision_after = persisted.value.party_save_revision or 0,
+        })
+        if not result.ok then
+            return result
+        end
+        local receipt_row = {
+            receipt_id = receipt_id,
+            request_hash = request_hash,
+            result_hash = result.value.digest,
+            status = 'COMMITTED',
+            operation_type = 'APPLY_PARTY_PRESET',
+            party_context = state.party_context,
+            party_save_revision_after = persisted.value.party_save_revision or 0,
+            preset_id = preset_id,
+            formation_revision_after = applied.value.party.revision,
+        }
+        if applied.value.party.active_preset_id ~= nil then
+            receipt_row.active_preset_id = applied.value.party.active_preset_id
+        end
+        local put = put_receipt_or_conflict(state, receipt_row, request_hash)
+        if not put.ok then
+            return put
+        end
+        if put.value.already_committed then
+            local save = maybe_persist_save(self, input)
+            if not save.ok then
+                return save
+            end
+            return result_ok({
+                status = 'APPLIED',
+                already_committed = true,
+                receipt_id = receipt_id,
+                request_hash = put.value.receipt.request_hash,
+                result_hash = put.value.receipt.result_hash,
+                formation = applied.value.party,
+                preset = applied.value.preset,
+                revision = applied.value.party.revision,
+                store = persisted.value,
+                save = save.value,
+            })
+        end
+        local save = maybe_persist_save(self, input)
+        if not save.ok then
+            return save
+        end
+        return result_ok({
+            status = 'APPLIED',
+            already_committed = false,
+            receipt_id = receipt_id,
+            request_hash = request_hash,
+            result_hash = result.value.digest,
+            formation = applied.value.party,
+            preset = applied.value.preset,
+            revision = applied.value.party.revision,
+            store = persisted.value,
+            save = save.value,
+        })
+    end
+
     local save = maybe_persist_save(self, input)
     if not save.ok then
         return save
@@ -578,13 +1119,78 @@ function Service:delete_preset(input)
     if type_value(input) ~= 'table' or get_metatable(input) ~= nil then
         return invalid('INPUT_TABLE_REQUIRED', { field = 'input' })
     end
+
+    local receipt_id_result = resolve_receipt_id(input)
+    if not receipt_id_result.ok then
+        return receipt_id_result
+    end
+    local receipt_id = receipt_id_result.value
+    local use_receipt = receipt_id ~= nil and store_supports_receipts(state)
+    if receipt_id ~= nil and not store_supports_receipts(state) then
+        return invalid('RECEIPT_STORE_REQUIRED', { field = 'party_store' })
+    end
+
+    local preset_id = raw_get(input, 'preset_id')
+    local request_hash = nil
+    if use_receipt then
+        local request = canonical_derive('party_delete_preset_request', {
+            { name = 'operation_type', type = 'STRING' },
+            { name = 'party_context', type = 'STRING' },
+            { name = 'preset_id', type = 'STRING' },
+        }, {
+            operation_type = 'DELETE_PARTY_PRESET',
+            party_context = state.party_context,
+            preset_id = tostring(preset_id or ''),
+        })
+        if not request.ok then
+            return request
+        end
+        request_hash = request.value.digest
+
+        local existing = state.party_store:get_receipt(receipt_id)
+        if not existing.ok then
+            return existing
+        end
+        if existing.value ~= nil then
+            if existing.value.request_hash ~= request_hash
+                or existing.value.operation_type ~= 'DELETE_PARTY_PRESET'
+                or existing.value.preset_id ~= preset_id
+            then
+                return receipt_conflict(
+                    receipt_id,
+                    existing.value.request_hash,
+                    request_hash
+                )
+            end
+            local save = maybe_persist_save(self, input)
+            if not save.ok then
+                return save
+            end
+            return result_ok({
+                status = 'DELETED',
+                already_committed = true,
+                receipt_id = receipt_id,
+                request_hash = existing.value.request_hash,
+                result_hash = existing.value.result_hash,
+                preset = nil,
+                cleared_active_preset = false,
+                store = {
+                    persisted = true,
+                    party_save_revision =
+                        existing.value.party_save_revision_after,
+                },
+                save = save.value,
+            })
+        end
+    end
+
     local loaded_presets = load_presets_map(state)
     if not loaded_presets.ok then
         return loaded_presets
     end
     local deleted = PartyPreset.delete_preset(
         loaded_presets.value,
-        raw_get(input, 'preset_id'),
+        preset_id,
         raw_get(input, 'expected_revision')
     )
     if not deleted.ok then
@@ -598,7 +1204,8 @@ function Service:delete_preset(input)
         return loaded_party
     end
     local party = loaded_party.value
-    if party.active_preset_id == raw_get(input, 'preset_id') then
+    local persisted
+    if party.active_preset_id == preset_id then
         party = {
             party_context = party.party_context,
             leader_character_id = party.leader_character_id,
@@ -611,14 +1218,87 @@ function Service:delete_preset(input)
         -- Clear active marker without bumping formation revision (metadata only).
         state.party = party
         cleared_active = true
-        local persisted = persist_party_and_presets(state)
+        persisted = persist_party_and_presets(state)
         if not persisted.ok then
             return persisted
+        end
+    else
+        persisted = persist_presets(state)
+        if not persisted.ok then
+            return persisted
+        end
+    end
+
+    if use_receipt then
+        local result = canonical_derive('party_delete_preset_result', {
+            { name = 'request_hash', type = 'STRING' },
+            { name = 'preset_id', type = 'STRING' },
+            { name = 'party_save_revision_after', type = 'INTEGER' },
+            { name = 'cleared_active_preset', type = 'BOOLEAN' },
+        }, {
+            request_hash = request_hash,
+            preset_id = preset_id,
+            party_save_revision_after = persisted.value.party_save_revision or 0,
+            cleared_active_preset = cleared_active,
+        })
+        if not result.ok then
+            return result
+        end
+        local receipt_row = {
+            receipt_id = receipt_id,
+            request_hash = request_hash,
+            result_hash = result.value.digest,
+            status = 'COMMITTED',
+            operation_type = 'DELETE_PARTY_PRESET',
+            party_context = state.party_context,
+            party_save_revision_after = persisted.value.party_save_revision or 0,
+            preset_id = preset_id,
+        }
+        local put = put_receipt_or_conflict(state, receipt_row, request_hash)
+        if not put.ok then
+            return put
+        end
+        if put.value.already_committed then
+            local save = maybe_persist_save(self, input)
+            if not save.ok then
+                return save
+            end
+            return result_ok({
+                status = 'DELETED',
+                already_committed = true,
+                receipt_id = receipt_id,
+                request_hash = put.value.receipt.request_hash,
+                result_hash = put.value.receipt.result_hash,
+                preset = deleted.value.preset,
+                cleared_active_preset = cleared_active,
+                formation = cleared_active and party or nil,
+                store = persisted.value,
+                save = save.value,
+            })
         end
         local save = maybe_persist_save(self, input)
         if not save.ok then
             return save
         end
+        return result_ok({
+            status = 'DELETED',
+            already_committed = false,
+            receipt_id = receipt_id,
+            request_hash = request_hash,
+            result_hash = result.value.digest,
+            preset = deleted.value.preset,
+            cleared_active_preset = cleared_active,
+            formation = cleared_active and party or nil,
+            store = persisted.value,
+            save = save.value,
+        })
+    end
+
+    local save = maybe_persist_save(self, input)
+    if not save.ok then
+        return save
+    end
+    if cleared_active then
         return result_ok({
             status = 'DELETED',
             preset = deleted.value.preset,
@@ -628,19 +1308,10 @@ function Service:delete_preset(input)
             save = save.value,
         })
     end
-
-    local persisted = persist_presets(state)
-    if not persisted.ok then
-        return persisted
-    end
-    local save = maybe_persist_save(self, input)
-    if not save.ok then
-        return save
-    end
     return result_ok({
         status = 'DELETED',
         preset = deleted.value.preset,
-        cleared_active_preset = cleared_active,
+        cleared_active_preset = false,
         store = persisted.value,
         save = save.value,
     })

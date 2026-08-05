@@ -1,11 +1,13 @@
 local PartyAggregate = require 'wzx.domain.party.party_aggregate'
 local PartyPreset = require 'wzx.domain.party.party_preset'
+local PartyReceiptCodec = require 'wzx.domain.party.party_receipt_codec'
 local PartySaveCodec = require 'wzx.domain.party.party_save_codec'
 local Result = require 'wzx.domain.common.result'
 
 local FakePartyStore = {}
 local error_value = error
 local get_metatable = getmetatable
+local raw_get = rawget
 local raw_next = next
 local result_err = Result.err
 local result_ok = Result.ok
@@ -63,6 +65,41 @@ local function copy_preset(preset)
     return snap.value
 end
 
+local function copy_receipt(receipt)
+    local copied = {
+        receipt_id = receipt.receipt_id,
+        request_hash = receipt.request_hash,
+        result_hash = receipt.result_hash,
+        status = receipt.status,
+        operation_type = receipt.operation_type,
+        party_context = receipt.party_context,
+        party_save_revision_after = receipt.party_save_revision_after,
+    }
+    if receipt.preset_id ~= nil then
+        copied.preset_id = receipt.preset_id
+    end
+    if receipt.formation_revision_after ~= nil then
+        copied.formation_revision_after = receipt.formation_revision_after
+    end
+    if receipt.active_preset_id ~= nil then
+        copied.active_preset_id = receipt.active_preset_id
+    end
+    return copied
+end
+
+local function snapshot_receipts(state)
+    local receipts = {}
+    local receipt_id
+    local receipt
+    for receipt_id, receipt in raw_next, state.receipts do
+        receipts[receipt_id] = copy_receipt(receipt)
+    end
+    return {
+        receipt_revision = state.receipt_revision,
+        receipts = receipts,
+    }
+end
+
 local function snapshot_state(state)
     local parties = {}
     local context
@@ -98,11 +135,13 @@ function FakePartyStore.new(options)
     local view = set_metatable({}, Store)
     STATES[view] = {
         party_save_revision = 0,
+        receipt_revision = 0,
         parties = {
             [initial_context] = empty.value,
         },
         presets = {},
         next_preset_seq = 1,
+        receipts = {},
     }
     return result_ok(view)
 end
@@ -353,6 +392,80 @@ function Store:get_save_revision()
         return invalid('STORE_AUTHORITY_REQUIRED')
     end
     return result_ok(state.party_save_revision)
+end
+
+function Store:export_receipt_bundle()
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    return PartyReceiptCodec.encode(snapshot_receipts(state))
+end
+
+function Store:import_receipt_bundle(bundle)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local decoded = PartyReceiptCodec.decode(bundle)
+    if not decoded.ok then
+        return decoded
+    end
+    local receipts = {}
+    local receipt_id
+    local receipt
+    for receipt_id, receipt in raw_next, decoded.value.receipts do
+        receipts[receipt_id] = copy_receipt(receipt)
+    end
+    state.receipt_revision = decoded.value.receipt_revision
+    state.receipts = receipts
+    return result_ok(true)
+end
+
+function Store:get_receipt(receipt_id)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local receipt = state.receipts[receipt_id]
+    if receipt == nil then
+        return result_ok(nil)
+    end
+    return result_ok(copy_receipt(receipt))
+end
+
+function Store:put_committed_receipt(receipt)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    if type_value(receipt) ~= 'table' or get_metatable(receipt) ~= nil then
+        return invalid('RECEIPT_TABLE_REQUIRED', { field = 'receipt' })
+    end
+    local receipt_id = raw_get(receipt, 'receipt_id')
+    if type_value(receipt_id) ~= 'string' then
+        return invalid('RECEIPT_ID_REQUIRED', { field = 'receipt_id' })
+    end
+    if state.receipts[receipt_id] ~= nil then
+        return result_ok({
+            already_present = true,
+            receipt = copy_receipt(state.receipts[receipt_id]),
+        })
+    end
+    state.receipts[receipt_id] = copy_receipt(receipt)
+    state.receipt_revision = state.receipt_revision + 1
+    return result_ok({
+        already_present = false,
+        receipt_revision = state.receipt_revision,
+    })
+end
+
+function Store:get_receipt_revision()
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    return result_ok(state.receipt_revision)
 end
 
 return FakePartyStore

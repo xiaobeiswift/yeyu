@@ -170,6 +170,11 @@ local PARTY_KEYS = {
     'preset_member_rows',
 }
 
+local PARTY_SLOT5_KEYS = {
+    'party_operation_metadata',
+    'party_operation_receipts',
+}
+
 local EQUIPMENT_KEYS = {
     'equipment_metadata',
     'equipment_instance_rows',
@@ -268,12 +273,19 @@ local function hydrate_world(targets, payload2, reports)
     )
 end
 
-local function hydrate_party(targets, payload3, reports)
+local function hydrate_party(targets, payload3, payload5, reports)
     local bundle, saw = pick_sections(payload3, PARTY_KEYS)
     if saw and not bundle.ok then
         return bundle
     end
-    if not saw then
+    local receipt_bundle, saw_receipts = pick_sections(
+        payload5,
+        PARTY_SLOT5_KEYS
+    )
+    if saw_receipts and not receipt_bundle.ok then
+        return receipt_bundle
+    end
+    if not saw and not saw_receipts then
         reports[#reports + 1] = report_entry('party', 'SKIPPED', {
             reason = 'SECTION_ABSENT',
         })
@@ -286,17 +298,36 @@ local function hydrate_party(targets, payload3, reports)
         })
         return result_ok(true)
     end
-    if type_value(store.import_save_bundle) ~= 'function' then
-        return invalid('TARGET_IMPORT_UNSUPPORTED', {
-            system_id = 'party',
-            method = 'import_save_bundle',
-        })
+    if saw then
+        if type_value(store.import_save_bundle) ~= 'function' then
+            return invalid('TARGET_IMPORT_UNSUPPORTED', {
+                system_id = 'party',
+                method = 'import_save_bundle',
+            })
+        end
+        local imported = store:import_save_bundle(bundle.value)
+        if not imported.ok then
+            return finish_import('party', imported, reports)
+        end
     end
-    return finish_import(
-        'party',
-        store:import_save_bundle(bundle.value),
-        reports
-    )
+    if saw_receipts then
+        if type_value(store.import_receipt_bundle) ~= 'function' then
+            return invalid('TARGET_IMPORT_UNSUPPORTED', {
+                system_id = 'party',
+                method = 'import_receipt_bundle',
+            })
+        end
+        local imported_receipts = store:import_receipt_bundle(
+            receipt_bundle.value
+        )
+        if not imported_receipts.ok then
+            return finish_import('party', imported_receipts, reports)
+        end
+    end
+    return finish_import('party', result_ok(true), reports, {
+        formation = saw == true,
+        receipts = saw_receipts == true,
+    })
 end
 
 local function hydrate_equipment(targets, payload4, payload5, reports)
@@ -648,7 +679,7 @@ function Service:hydrate(input)
     if not step.ok then
         return step
     end
-    step = hydrate_party(targets, payload3, reports)
+    step = hydrate_party(targets, payload3, payload5, reports)
     if not step.ok then
         return step
     end
