@@ -45,6 +45,20 @@ local DEFINITIONS = {
         validator_id = 'validator_equipment_tombstone_rows_v1',
         codec_id = 'codec_equipment_save_bundle_v1',
     },
+    {
+        section_key = 'equipment_operation_metadata',
+        section_path = 'equipment_operation_metadata',
+        slot_id = 5,
+        validator_id = 'validator_equipment_operation_metadata_v1',
+        codec_id = 'codec_equipment_receipt_bundle_v1',
+    },
+    {
+        section_key = 'equipment_operation_receipts',
+        section_path = 'equipment_operation_receipts',
+        slot_id = 5,
+        validator_id = 'validator_equipment_operation_receipts_v1',
+        codec_id = 'codec_equipment_receipt_bundle_v1',
+    },
 }
 
 local function definition_copy(source)

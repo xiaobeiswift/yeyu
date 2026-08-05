@@ -179,6 +179,11 @@ local EQUIPMENT_KEYS = {
     'equipment_tombstone_rows',
 }
 
+local EQUIPMENT_SLOT5_KEYS = {
+    'equipment_operation_metadata',
+    'equipment_operation_receipts',
+}
+
 local CHARACTER_SLOT5_KEYS = {
     'character_operation_metadata',
     'character_operation_receipts',
@@ -294,12 +299,19 @@ local function hydrate_party(targets, payload3, reports)
     )
 end
 
-local function hydrate_equipment(targets, payload4, reports)
+local function hydrate_equipment(targets, payload4, payload5, reports)
     local bundle, saw = pick_sections(payload4, EQUIPMENT_KEYS)
     if saw and not bundle.ok then
         return bundle
     end
-    if not saw then
+    local receipt_bundle, saw_receipts = pick_sections(
+        payload5,
+        EQUIPMENT_SLOT5_KEYS
+    )
+    if saw_receipts and not receipt_bundle.ok then
+        return receipt_bundle
+    end
+    if not saw and not saw_receipts then
         reports[#reports + 1] = report_entry('equipment', 'SKIPPED', {
             reason = 'SECTION_ABSENT',
         })
@@ -312,17 +324,36 @@ local function hydrate_equipment(targets, payload4, reports)
         })
         return result_ok(true)
     end
-    if type_value(store.import_save_bundle) ~= 'function' then
-        return invalid('TARGET_IMPORT_UNSUPPORTED', {
-            system_id = 'equipment',
-            method = 'import_save_bundle',
-        })
+    if saw then
+        if type_value(store.import_save_bundle) ~= 'function' then
+            return invalid('TARGET_IMPORT_UNSUPPORTED', {
+                system_id = 'equipment',
+                method = 'import_save_bundle',
+            })
+        end
+        local imported = store:import_save_bundle(bundle.value)
+        if not imported.ok then
+            return finish_import('equipment', imported, reports)
+        end
     end
-    return finish_import(
-        'equipment',
-        store:import_save_bundle(bundle.value),
-        reports
-    )
+    if saw_receipts then
+        if type_value(store.import_receipt_bundle) ~= 'function' then
+            return invalid('TARGET_IMPORT_UNSUPPORTED', {
+                system_id = 'equipment',
+                method = 'import_receipt_bundle',
+            })
+        end
+        local imported_receipts = store:import_receipt_bundle(
+            receipt_bundle.value
+        )
+        if not imported_receipts.ok then
+            return finish_import('equipment', imported_receipts, reports)
+        end
+    end
+    return finish_import('equipment', result_ok(true), reports, {
+        instances = saw == true,
+        receipts = saw_receipts == true,
+    })
 end
 
 local function hydrate_inventory(targets, payload4, reports)
@@ -621,7 +652,7 @@ function Service:hydrate(input)
     if not step.ok then
         return step
     end
-    step = hydrate_equipment(targets, payload4, reports)
+    step = hydrate_equipment(targets, payload4, payload5, reports)
     if not step.ok then
         return step
     end

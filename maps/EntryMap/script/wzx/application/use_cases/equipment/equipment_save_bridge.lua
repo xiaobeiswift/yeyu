@@ -186,6 +186,51 @@ function Bridge:persist_player_equipment(input)
         return merged_slot4
     end
 
+    local receipt_bundle = nil
+    if type_value(state.store.export_receipt_bundle) == 'function' then
+        local exported_receipts = state.store:export_receipt_bundle()
+        if not exported_receipts.ok then
+            return exported_receipts
+        end
+        receipt_bundle = exported_receipts.value
+    end
+
+    local dirty_slots = {
+        {
+            slot_id = 4,
+            expected_revision = slot4.value.expected_revision,
+            payload = merged_slot4.value,
+        },
+    }
+    local slot5_expected = 0
+    if receipt_bundle ~= nil then
+        local slot5 = SlotPayloadUtil.load_slot_state(
+            state.coordinator,
+            state.save_invoke,
+            player_ref.value,
+            5,
+            request_id .. '_load5'
+        )
+        if not slot5.ok then
+            return slot5
+        end
+        local merged_slot5 = SlotPayloadUtil.merge_sections(slot5.value.payload, {
+            equipment_operation_metadata =
+                receipt_bundle.equipment_operation_metadata,
+            equipment_operation_receipts =
+                receipt_bundle.equipment_operation_receipts,
+        })
+        if not merged_slot5.ok then
+            return merged_slot5
+        end
+        slot5_expected = slot5.value.expected_revision
+        dirty_slots[#dirty_slots + 1] = {
+            slot_id = 5,
+            expected_revision = slot5_expected,
+            payload = merged_slot5.value,
+        }
+    end
+
     local command_id = raw_get(input, 'command_id') or (request_id .. '_ckpt')
     local saved = state.save_checkpoint:save({
         player_ref = player_ref.value,
@@ -197,13 +242,7 @@ function Bridge:persist_player_equipment(input)
         player_profile = slot1.value.player_profile,
         settings_profile = slot1.value.settings_profile,
         content_version = raw_get(input, 'content_version') or 'content-v1',
-        dirty_slots = {
-            {
-                slot_id = 4,
-                expected_revision = slot4.value.expected_revision,
-                payload = merged_slot4.value,
-            },
-        },
+        dirty_slots = dirty_slots,
     }, state.save_invoke)
     if not saved.ok then
         return saved
@@ -216,9 +255,11 @@ function Bridge:persist_player_equipment(input)
         transaction_id = saved.value.manifest_transaction_id,
         data_transaction_id = saved.value.data_transaction_id,
         slot4_revision = slot4.value.expected_revision + advanced,
+        slot5_revision = receipt_bundle ~= nil and (slot5_expected + advanced) or nil,
         slot1_revision = saved.value.slot1_revision,
         manifest = saved.value.manifest,
         equipment_bundle = bundle.value,
+        receipt_bundle = receipt_bundle,
         created_save = slot1.value.created_now == true,
     })
 end

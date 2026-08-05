@@ -169,6 +169,10 @@ function EconomyService.bind(options)
     return result_ok(view)
 end
 
+function EconomyService.is_authority(value)
+    return type_value(value) == 'table' and STATES[value] ~= nil
+end
+
 function Service:get_balance(currency_id)
     local state = STATES[self]
     if state == nil then

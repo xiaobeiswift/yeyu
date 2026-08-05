@@ -1,5 +1,6 @@
 local CharacterLoadout = require 'wzx.domain.equipment.character_loadout'
 local EquipmentInstance = require 'wzx.domain.equipment.equipment_instance'
+local EquipmentReceiptCodec = require 'wzx.domain.equipment.equipment_receipt_codec'
 local EquipmentSaveCodec = require 'wzx.domain.equipment.equipment_save_codec'
 local Ordered = require 'wzx.domain.common.ordered'
 local Result = require 'wzx.domain.common.result'
@@ -8,6 +9,7 @@ local FakeEquipmentStore = {}
 local bytewise_string_less = Ordered.bytewise_string_less
 local error_value = error
 local get_metatable = getmetatable
+local raw_get = rawget
 local raw_next = next
 local result_err = Result.err
 local result_ok = Result.ok
@@ -41,6 +43,26 @@ end
 
 local function copy_loadout(loadout)
     return CharacterLoadout.snapshot(loadout)
+end
+
+local function copy_receipt(receipt)
+    local copied = {
+        receipt_id = receipt.receipt_id,
+        request_hash = receipt.request_hash,
+        result_hash = receipt.result_hash,
+        status = receipt.status,
+        operation_type = receipt.operation_type,
+        instance_id = receipt.instance_id,
+        from_level = receipt.from_level,
+        to_level = receipt.to_level,
+        copper_cost = receipt.copper_cost,
+        material_count = receipt.material_count,
+        equipment_save_revision_after = receipt.equipment_save_revision_after,
+    }
+    if receipt.material_item_id ~= nil then
+        copied.material_item_id = receipt.material_item_id
+    end
+    return copied
 end
 
 local function snapshot_state(state)
@@ -80,12 +102,27 @@ local function snapshot_state(state)
     })
 end
 
+local function snapshot_receipts(state)
+    local receipts = {}
+    local receipt_id
+    local receipt
+    for receipt_id, receipt in raw_next, state.receipts do
+        receipts[receipt_id] = copy_receipt(receipt)
+    end
+    return {
+        receipt_revision = state.receipt_revision,
+        receipts = receipts,
+    }
+end
+
 function FakeEquipmentStore.new()
     local view = set_metatable({}, Store)
     STATES[view] = {
         equipment_save_revision = 0,
+        receipt_revision = 0,
         instances = {},
         loadouts = {},
+        receipts = {},
     }
     return result_ok(view)
 end
@@ -222,6 +259,14 @@ function Store:export_save_bundle()
     return EquipmentSaveCodec.encode(snapshot.value)
 end
 
+function Store:export_receipt_bundle()
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    return EquipmentReceiptCodec.encode(snapshot_receipts(state))
+end
+
 function Store:import_save_bundle(bundle)
     local state = STATES[self]
     if state == nil then
@@ -248,12 +293,78 @@ function Store:import_save_bundle(bundle)
     return result_ok(true)
 end
 
+function Store:import_receipt_bundle(bundle)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local decoded = EquipmentReceiptCodec.decode(bundle)
+    if not decoded.ok then
+        return decoded
+    end
+    local receipts = {}
+    local receipt_id
+    local receipt
+    for receipt_id, receipt in raw_next, decoded.value.receipts do
+        receipts[receipt_id] = copy_receipt(receipt)
+    end
+    state.receipt_revision = decoded.value.receipt_revision
+    state.receipts = receipts
+    return result_ok(true)
+end
+
+function Store:get_receipt(receipt_id)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local receipt = state.receipts[receipt_id]
+    if receipt == nil then
+        return result_ok(nil)
+    end
+    return result_ok(copy_receipt(receipt))
+end
+
+function Store:put_committed_receipt(receipt)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    if type_value(receipt) ~= 'table' or get_metatable(receipt) ~= nil then
+        return invalid('RECEIPT_TABLE_REQUIRED', { field = 'receipt' })
+    end
+    local receipt_id = raw_get(receipt, 'receipt_id')
+    if type_value(receipt_id) ~= 'string' then
+        return invalid('RECEIPT_ID_REQUIRED', { field = 'receipt_id' })
+    end
+    if state.receipts[receipt_id] ~= nil then
+        return result_ok({
+            already_present = true,
+            receipt = copy_receipt(state.receipts[receipt_id]),
+        })
+    end
+    state.receipts[receipt_id] = copy_receipt(receipt)
+    state.receipt_revision = state.receipt_revision + 1
+    return result_ok({
+        already_present = false,
+        receipt_revision = state.receipt_revision,
+    })
+end
+
 function Store:get_save_revision()
     local state = STATES[self]
     if state == nil then
         return invalid('STORE_AUTHORITY_REQUIRED')
     end
     return result_ok(state.equipment_save_revision)
+end
+
+function Store:get_receipt_revision()
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    return result_ok(state.receipt_revision)
 end
 
 return FakeEquipmentStore

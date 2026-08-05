@@ -1,16 +1,25 @@
 local Harness = require 'wzx.tests.harness'
+local CanonicalReceiptHashV1 = require 'wzx.domain.common.canonical_receipt_hash_v1'
 local CharacterLoadout = require 'wzx.domain.equipment.character_loadout'
+local CurrencyCatalog = require 'wzx.config.schema.economy.catalog'
+local EconomyService = require 'wzx.application.use_cases.economy.economy_service'
 local EnhancementPolicy = require 'wzx.domain.equipment.enhancement_policy'
 local EquipmentCatalog = require 'wzx.config.schema.equipment.catalog'
 local EquipmentInstance = require 'wzx.domain.equipment.equipment_instance'
+local EquipmentReceiptCodec = require 'wzx.domain.equipment.equipment_receipt_codec'
 local EquipmentSaveBridge = require 'wzx.application.use_cases.equipment.equipment_save_bridge'
 local EquipmentSaveCodec = require 'wzx.domain.equipment.equipment_save_codec'
 local EquipmentSectionRegistrar = require 'wzx.config.schema.equipment.section_registrar'
 local EquipmentService = require 'wzx.application.use_cases.equipment.equipment_service'
+local FakeEconomyStore = require 'wzx.adapters.fake.economy.fake_economy_store'
 local FakeEquipmentStore = require 'wzx.adapters.fake.equipment.fake_equipment_store'
+local FakeInventoryStore = require 'wzx.adapters.fake.inventory.fake_inventory_store'
 local HydrateGameRuntime = require 'wzx.application.use_cases.save.hydrate_game_runtime'
+local InventoryService = require 'wzx.application.use_cases.inventory.inventory_service'
+local ItemCatalog = require 'wzx.config.schema.inventory.catalog'
 local LoadGameSave = require 'wzx.application.use_cases.save.load_game_save'
 local MemorySaveStore = require 'wzx.adapters.fake.services.memory_save_store'
+local RewardCatalog = require 'wzx.config.schema.reward.catalog'
 local SaveCoordinator = require 'wzx.application.save.save_coordinator'
 local SectionOwnerRegistry = require 'wzx.config.schema.section_owner_registry'
 local StatContribution = require 'wzx.domain.contracts.stat_contribution'
@@ -19,6 +28,16 @@ local TemperRule = require 'wzx.config.schema.equipment.temper_rule'
 
 local case = Harness.case
 local assert = Harness.assert
+
+local function make_receipt_id(label)
+    local derived = CanonicalReceiptHashV1.derive('equipment_test_receipt', {
+        { name = 'label', type = 'STRING' },
+    }, {
+        label = label,
+    })
+    assert.equal(derived.ok, true)
+    return derived.value.receipt_id
+end
 
 local function enhance_track(id, max_level)
     max_level = max_level or 3
@@ -542,7 +561,7 @@ return {
         assert.equal(decoded.value.loadouts[1].weapon_instance_id, 'eqinst_sword_save')
     end),
 
-    case('section registrar installs slot-4 equipment sections', function()
+    case('section registrar installs slot-4 equipment and slot-5 receipt sections', function()
         local owners = SectionOwnerRegistry.new()
         assert.equal(owners.ok, true)
         local registered = EquipmentSectionRegistrar.register({
@@ -550,11 +569,15 @@ return {
             section_owners = owners.value,
         })
         assert.equal(registered.ok, true)
-        assert.equal(registered.value, 6)
+        assert.equal(registered.value, 8)
         local meta = owners.value:get('equipment_metadata')
         assert.equal(meta.ok, true)
         assert.equal(meta.value.slot_id, 4)
         assert.equal(meta.value.owner_system, '08')
+        local receipts = owners.value:get('equipment_operation_receipts')
+        assert.equal(receipts.ok, true)
+        assert.equal(receipts.value.slot_id, 5)
+        assert.equal(receipts.value.owner_system, '08')
     end),
 
     case('equipment service checkpoints create and equip then hydrate resumes loadout', function()
@@ -677,5 +700,321 @@ return {
             resumed.value:get_loadout('char_hero').value.weapon_instance_id,
             nil
         )
+    end),
+
+    case('enhance debits copper and material with receipt idempotency and hydrate', function()
+        local catalog = build_catalog()
+
+        local currency_catalog = CurrencyCatalog.build({
+            currency_definitions = {
+                {
+                    id = 'currency_copper',
+                    schema_version = 1,
+                    category = 'SOFT',
+                    balance_cap = 100000,
+                    source_policy_id = 'currpolicy_copper_source',
+                    sink_policy_id = 'currpolicy_copper_sink',
+                    name_key = 'currency.copper.name',
+                },
+            },
+        })
+        assert.equal(currency_catalog.ok, true)
+        local reward_catalog = RewardCatalog.build({
+            reward_bundles = {
+                {
+                    id = 'reward_fund_copper',
+                    schema_version = 1,
+                    entries = {
+                        {
+                            entry_order = 1,
+                            entry_type = 'CURRENCY',
+                            target_id = 'currency_copper',
+                            quantity_min = 500,
+                            quantity_max = 500,
+                        },
+                    },
+                },
+            },
+        })
+        assert.equal(reward_catalog.ok, true)
+        local economy_store = FakeEconomyStore.new()
+        assert.equal(economy_store.ok, true)
+        local economy = EconomyService.bind({
+            currency_catalog = currency_catalog.value,
+            reward_catalog = reward_catalog.value,
+            store = economy_store.value,
+        })
+        assert.equal(economy.ok, true)
+
+        local item_catalog = ItemCatalog.build({
+            item_definitions = {
+                {
+                    id = 'item_enhance_stone',
+                    schema_version = 1,
+                    category = 'MATERIAL',
+                    name_key = 'item.enhance_stone.name',
+                    max_stack = 99,
+                    ownership_cap = 999,
+                    rarity = 'COMMON',
+                },
+            },
+        })
+        assert.equal(item_catalog.ok, true)
+        local inventory_store = FakeInventoryStore.new()
+        assert.equal(inventory_store.ok, true)
+        local inventory = InventoryService.bind({
+            item_catalog = item_catalog.value,
+            store = inventory_store.value,
+        })
+        assert.equal(inventory.ok, true)
+
+        local funded = economy.value:prepare_reward({
+            reward_id = 'reward_fund_copper',
+            source_type = 'QUEST',
+            source_ref = 'reward_fund_copper',
+            source_occurrence_id = 'quest_fund_enhance_001',
+        })
+        assert.equal(funded.ok, true)
+        local granted = economy.value:grant_prepared_reward({
+            prepared = funded.value,
+            receipt_id = make_receipt_id('fund_enhance_copper'),
+            purpose_type = 'QUEST_REWARD',
+            purpose_ref = 'quest_fund_enhance',
+        })
+        assert.equal(granted.ok, true, granted.error and granted.error.code)
+        local stones = inventory.value:grant_items({
+            grants = { { item_id = 'item_enhance_stone', amount = 10 } },
+        })
+        assert.equal(stones.ok, true, stones.error and stones.error.code)
+
+        local memory = MemorySaveStore.new()
+        local coordinator = SaveCoordinator.bind({ save_store = memory })
+        assert.equal(coordinator.ok, true)
+        local invoke = SaveCoordinator.fake_invoke(memory)
+        local load = LoadGameSave.bind({ coordinator = coordinator.value })
+        assert.equal(load.ok, true)
+
+        local equip_store = FakeEquipmentStore.new()
+        assert.equal(equip_store.ok, true)
+        local bridge = EquipmentSaveBridge.bind({
+            store = equip_store.value,
+            coordinator = coordinator.value,
+            save_invoke = invoke,
+            default_save_seed = 808002,
+        })
+        assert.equal(bridge.ok, true)
+        local service = EquipmentService.bind({
+            catalog = catalog,
+            store = equip_store.value,
+            save_bridge = bridge.value,
+            economy_service = economy.value,
+            inventory_service = inventory.value,
+        })
+        assert.equal(service.ok, true)
+
+        local created = service.value:create_instance({
+            equipment_id = 'equip_iron_sword',
+            origin_type = 'LOOT',
+            origin_ref = 'battle.intro.drop',
+            creation_ordinal = 0,
+            config_version = 1,
+            seed = 77,
+            instance_id = 'eqinst_sword_enhance',
+            player_save_scope = 'player_enhance_001',
+            request_id = 'request_enhance_create',
+            command_id = 'cmd_enhance_create',
+            skip_save = true,
+        })
+        assert.equal(created.ok, true, created.error and created.error.code)
+
+        local receipt_id = make_receipt_id('enhance_once')
+        local enhanced = service.value:enhance({
+            instance_id = 'eqinst_sword_enhance',
+            receipt_id = receipt_id,
+            player_chapter = 1,
+            player_save_scope = 'player_enhance_001',
+            request_id = 'request_enhance_1',
+            command_id = 'cmd_enhance_1',
+        })
+        assert.equal(enhanced.ok, true, enhanced.error and enhanced.error.code)
+        assert.equal(enhanced.value.status, 'COMMITTED')
+        assert.equal(enhanced.value.already_committed, false)
+        assert.equal(enhanced.value.from_level, 0)
+        assert.equal(enhanced.value.to_level, 1)
+        assert.equal(enhanced.value.planned_cost.copper_cost, 100)
+        assert.equal(enhanced.value.planned_cost.material_count, 1)
+        assert.equal(enhanced.value.instance.enhancement_level, 1)
+        assert.equal(enhanced.value.save.status, 'COMMITTED')
+        assert.equal(enhanced.value.save.slot5_revision ~= nil, true)
+
+        local copper = economy.value:get_balance('currency_copper')
+        assert.equal(copper.ok, true)
+        assert.equal(copper.value.balance, 400)
+        local stone_count = inventory.value:get_count('item_enhance_stone')
+        assert.equal(stone_count.ok, true)
+        assert.equal(stone_count.value.count, 9)
+
+        local replay = service.value:enhance({
+            instance_id = 'eqinst_sword_enhance',
+            receipt_id = receipt_id,
+            player_chapter = 1,
+            player_save_scope = 'player_enhance_001',
+            request_id = 'request_enhance_1_replay',
+            command_id = 'cmd_enhance_1_replay',
+        })
+        assert.equal(replay.ok, true, replay.error and replay.error.code)
+        assert.equal(replay.value.already_committed, true)
+        copper = economy.value:get_balance('currency_copper')
+        assert.equal(copper.value.balance, 400)
+        stone_count = inventory.value:get_count('item_enhance_stone')
+        assert.equal(stone_count.value.count, 9)
+        assert.equal(
+            service.value:get_instance('eqinst_sword_enhance').value.enhancement_level,
+            1
+        )
+
+        local receipt_bundle = equip_store.value:export_receipt_bundle()
+        assert.equal(receipt_bundle.ok, true)
+        local decoded = EquipmentReceiptCodec.decode(receipt_bundle.value)
+        assert.equal(decoded.ok, true, decoded.error and decoded.error.details and decoded.error.details.reason)
+        assert.equal(decoded.value.receipts[receipt_id] ~= nil, true)
+        assert.equal(decoded.value.receipts[receipt_id].to_level, 1)
+
+        local loaded = load.value:load({
+            player_ref = 'player_enhance_001',
+            session_instance_id = 'session_enhance_1',
+            request_id = 'request_load_enhance_1',
+        }, invoke)
+        assert.equal(loaded.ok, true, loaded.error and loaded.error.code)
+        assert.equal(loaded.value.mode, 'READY')
+        assert.equal(
+            loaded.value.loaded_envelopes[4].payload.equipment_instance_rows[1].enhancement_level,
+            1
+        )
+        assert.equal(
+            #loaded.value.loaded_envelopes[5].payload.equipment_operation_receipts,
+            1
+        )
+
+        local fresh_store = FakeEquipmentStore.new()
+        assert.equal(fresh_store.ok, true)
+        local hydrate = HydrateGameRuntime.bind({})
+        assert.equal(hydrate.ok, true)
+        local hydrated = hydrate.value:hydrate({
+            load_result = loaded.value,
+            player_save_scope = 'player_enhance_001',
+            targets = {
+                equipment_store = fresh_store.value,
+            },
+        })
+        assert.equal(hydrated.ok, true, hydrated.error and hydrated.error.code)
+
+        local resumed = EquipmentService.bind({
+            catalog = catalog,
+            store = fresh_store.value,
+            economy_service = economy.value,
+            inventory_service = inventory.value,
+        })
+        assert.equal(resumed.ok, true)
+        local resumed_instance = resumed.value:get_instance('eqinst_sword_enhance')
+        assert.equal(resumed_instance.ok, true)
+        assert.equal(resumed_instance.value.enhancement_level, 1)
+        local resumed_receipt = fresh_store.value:get_receipt(receipt_id)
+        assert.equal(resumed_receipt.ok, true)
+        assert.equal(resumed_receipt.value ~= nil, true)
+        assert.equal(resumed_receipt.value.to_level, 1)
+
+        -- Same receipt on hydrated store returns already_committed without re-debit.
+        local replay_after_hydrate = resumed.value:enhance({
+            instance_id = 'eqinst_sword_enhance',
+            receipt_id = receipt_id,
+            player_chapter = 1,
+            skip_save = true,
+        })
+        assert.equal(replay_after_hydrate.ok, true)
+        assert.equal(replay_after_hydrate.value.already_committed, true)
+        copper = economy.value:get_balance('currency_copper')
+        assert.equal(copper.value.balance, 400)
+    end),
+
+    case('enhance rejects insufficient copper before mutating instance', function()
+        local catalog = build_catalog()
+        local currency_catalog = CurrencyCatalog.build({
+            currency_definitions = {
+                {
+                    id = 'currency_copper',
+                    schema_version = 1,
+                    category = 'SOFT',
+                    balance_cap = 100000,
+                    source_policy_id = 'currpolicy_copper_source',
+                    sink_policy_id = 'currpolicy_copper_sink',
+                    name_key = 'currency.copper.name',
+                },
+            },
+        })
+        assert.equal(currency_catalog.ok, true)
+        local reward_catalog = RewardCatalog.build({
+            reward_bundles = {},
+        })
+        assert.equal(reward_catalog.ok, true)
+        local economy = EconomyService.bind({
+            currency_catalog = currency_catalog.value,
+            reward_catalog = reward_catalog.value,
+            store = FakeEconomyStore.new().value,
+        })
+        assert.equal(economy.ok, true)
+        local inventory = InventoryService.bind({
+            item_catalog = ItemCatalog.build({
+                item_definitions = {
+                    {
+                        id = 'item_enhance_stone',
+                        schema_version = 1,
+                        category = 'MATERIAL',
+                        name_key = 'item.enhance_stone.name',
+                        max_stack = 99,
+                        ownership_cap = 999,
+                    },
+                },
+            }).value,
+            store = FakeInventoryStore.new().value,
+        })
+        assert.equal(inventory.ok, true)
+        assert.equal(inventory.value:grant_items({
+            grants = { { item_id = 'item_enhance_stone', amount = 5 } },
+        }).ok, true)
+
+        local equip_store = FakeEquipmentStore.new()
+        assert.equal(equip_store.ok, true)
+        local service = EquipmentService.bind({
+            catalog = catalog,
+            store = equip_store.value,
+            economy_service = economy.value,
+            inventory_service = inventory.value,
+        })
+        assert.equal(service.ok, true)
+        assert.equal(service.value:create_instance({
+            equipment_id = 'equip_iron_sword',
+            origin_type = 'LOOT',
+            origin_ref = 'battle.intro.drop',
+            creation_ordinal = 0,
+            config_version = 1,
+            seed = 9,
+            instance_id = 'eqinst_sword_poor',
+            skip_save = true,
+        }).ok, true)
+
+        local failed = service.value:enhance({
+            instance_id = 'eqinst_sword_poor',
+            receipt_id = make_receipt_id('enhance_poor'),
+            player_chapter = 1,
+            skip_save = true,
+        })
+        assert.equal(failed.ok, false)
+        assert.equal(failed.error.code, 'ECONOMY_CURRENCY_INSUFFICIENT')
+        assert.equal(
+            service.value:get_instance('eqinst_sword_poor').value.enhancement_level,
+            0
+        )
+        assert.equal(inventory.value:get_count('item_enhance_stone').value.count, 5)
     end),
 }
