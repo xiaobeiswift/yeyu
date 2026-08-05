@@ -142,6 +142,7 @@ function Chapter01.build_source()
     })
 
     -- ── Main 02 驿道灭口 ──────────────────────────────────────────
+    -- 流程：到点 → 战前短句 → 清遭遇 + 搜现场 → 现场调查对白
     add_objective({
         id = 'objective_main_02_reach_ambush',
         stage_id = 'stage_main_02_site',
@@ -150,6 +151,15 @@ function Chapter01.build_source()
         progress_semantics = 'ONCE_FACT',
         event_type = 'LocationDiscovered',
         guide_ref_id = 'location_road_ambush',
+    })
+    add_objective({
+        id = 'objective_main_02_talk_arrive',
+        stage_id = 'stage_main_02_arrive',
+        objective_type = 'TALK',
+        target_id = 'dialogue_main_02_ambush_arrive',
+        progress_semantics = 'ONCE_FACT',
+        event_type = 'DialogueCompleted',
+        guide_ref_id = 'npc_partner_liang_jibai',
     })
     add_objective({
         id = 'objective_main_02_clear_ambush',
@@ -169,10 +179,26 @@ function Chapter01.build_source()
         event_type = 'SearchPointResolved',
         guide_ref_id = 'interact_ambush_search',
     })
+    add_objective({
+        id = 'objective_main_02_talk_site',
+        stage_id = 'stage_main_02_debrief',
+        objective_type = 'TALK',
+        target_id = 'dialogue_main_02_ambush_site',
+        progress_semantics = 'ONCE_FACT',
+        event_type = 'DialogueCompleted',
+        guide_ref_id = 'npc_partner_liang_jibai',
+    })
     add_stage({
         id = 'stage_main_02_site',
         quest_id = 'quest_main_02_road_silencing',
         objective_ids = { 'objective_main_02_reach_ambush' },
+        next_stage_id = 'stage_main_02_arrive',
+        checkpoint = true,
+    })
+    add_stage({
+        id = 'stage_main_02_arrive',
+        quest_id = 'quest_main_02_road_silencing',
+        objective_ids = { 'objective_main_02_talk_arrive' },
         next_stage_id = 'stage_main_02_fight',
         checkpoint = true,
     })
@@ -183,6 +209,13 @@ function Chapter01.build_source()
             'objective_main_02_clear_ambush',
             'objective_main_02_search_site',
         },
+        next_stage_id = 'stage_main_02_debrief',
+        checkpoint = true,
+    })
+    add_stage({
+        id = 'stage_main_02_debrief',
+        quest_id = 'quest_main_02_road_silencing',
+        objective_ids = { 'objective_main_02_talk_site' },
         checkpoint = true,
     })
     add_quest({
@@ -191,7 +224,12 @@ function Chapter01.build_source()
         accept_policy = 'AUTO_EVENT',
         prerequisite_quest_id = 'quest_main_01_night_ferry',
         first_stage_id = 'stage_main_02_site',
-        stage_ids = { 'stage_main_02_site', 'stage_main_02_fight' },
+        stage_ids = {
+            'stage_main_02_site',
+            'stage_main_02_arrive',
+            'stage_main_02_fight',
+            'stage_main_02_debrief',
+        },
         reward_id = 'reward_main_02',
         journal_sort_order = 20,
     })

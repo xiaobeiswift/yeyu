@@ -8,7 +8,7 @@
 | 序 | quest_id | 中文名 | 接取 | 前置 | 阶段数 | 终局奖励占位 |
 |---:|---|---|---|---|---:|---|
 | 1 | quest_main_01_night_ferry | 夜投雾津 | AUTO_EVENT | — | 2 | reward_main_01 |
-| 2 | quest_main_02_road_silencing | 驿道灭口 | AUTO_EVENT | 01 | 2 | reward_main_02 |
+| 2 | quest_main_02_road_silencing | 驿道灭口 | AUTO_EVENT | 01 | 4 | reward_main_02 |
 | 3 | quest_main_03_mist_and_wood | 雾病与黑木 | AUTO_EVENT | 02 | 2 | reward_main_03 |
 | 4 | quest_main_04_no_bandits | 岭上没有匪 | AUTO_EVENT | 03 | 2 | reward_main_04 |
 | 5 | quest_main_05_proof_taker | 夺证之人 | AUTO_EVENT | 04 | 2 | reward_main_05 |
@@ -34,7 +34,7 @@
 
 | 类型前缀 | 示例 ID |
 |---|---|
-| dialogue_ | dialogue_main_01_post_hire, dialogue_main_05_ke_confront, dialogue_main_09_proof_choice |
+| dialogue_ | dialogue_main_01_post_hire, dialogue_main_02_ambush_arrive, dialogue_main_02_ambush_site, dialogue_main_05_ke_confront, dialogue_main_09_proof_choice |
 | encounter_ | encounter_main_02_road_ambush, encounter_main_05_ke_lishan, encounter_main_08_meng_jiansheng |
 | location_ | location_mist_ferry_hall, location_road_ambush, location_blackwood_gate, location_sunken_bell_court, location_bell_cavern |
 | interact_ | interact_ambush_search, interact_ridge_kiln, interact_ridge_stele, interact_cavern_nameplate, interact_side_bell, interact_side_hidden_stele |
