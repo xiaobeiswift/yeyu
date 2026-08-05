@@ -1,4 +1,5 @@
 local PlayerProfile = require 'wzx.domain.save.player_profile'
+local RecoveryJournal = require 'wzx.domain.save.recovery_journal'
 local Result = require 'wzx.domain.common.result'
 local RuntimeId = require 'wzx.domain.common.runtime_id'
 local SaveEnvelope = require 'wzx.domain.save.save_envelope'
@@ -6,6 +7,10 @@ local SaveErrorCodes = require 'wzx.domain.save.error_codes'
 local SaveManifest = require 'wzx.domain.save.save_manifest'
 local SlotRevisionVector = require 'wzx.domain.save.slot_revision_vector'
 local TableShape = require 'wzx.domain.common.table_shape'
+local WorldState = require 'wzx.domain.world.world_state'
+local PendingCheckpointIntent = require 'wzx.domain.save.pending_checkpoint_intent'
+local OrphanForwardRecovery = require 'wzx.domain.save.orphan_forward_recovery'
+local RecoverOrphanCheckpoint = require 'wzx.application.use_cases.save.recover_orphan_checkpoint'
 
 local LoadGameSave = {}
 local error_value = error
@@ -63,6 +68,74 @@ local function slot_report(slot_id, fetch_status, extra)
         end
     end
     return report
+end
+
+-- Step 9 NORMALIZE_TRANSIENT_WORLD: never restore TraversalSession / mid-air
+-- state. Landing receipt is kept only with matching slot-5 recovery evidence.
+local function normalize_transient_world(loaded_envelopes)
+    local report = {
+        traversal_session = 'DISCARDED',
+        applied = false,
+        action = 'SKIPPED',
+        reason = 'NO_WORLD_POSITION',
+    }
+    local envelope2 = loaded_envelopes and loaded_envelopes[2]
+    if type_value(envelope2) ~= 'table'
+        or type_value(envelope2.payload) ~= 'table'
+        or type_value(envelope2.payload.world_position) ~= 'table'
+    then
+        return result_ok(report)
+    end
+
+    local position = envelope2.payload.world_position
+    local recovery_rows = nil
+    local envelope5 = loaded_envelopes[5]
+    if type_value(envelope5) == 'table'
+        and type_value(envelope5.payload) == 'table'
+    then
+        recovery_rows = envelope5.payload.save_recovery_transactions
+    end
+
+    local evidence = RecoveryJournal.reconcile_landing_evidence(
+        position,
+        recovery_rows or {}
+    )
+    local evidence_view
+    if not evidence.ok then
+        -- Malformed recovery section is treated as insufficient evidence, not a
+        -- hard load failure: snap to last_safe_marker_id in memory.
+        evidence_view = {
+            matched = false,
+            status = 'RECOVERY_SECTION_INVALID',
+            reason = evidence.error
+                and evidence.error.details
+                and evidence.error.details.reason,
+        }
+    else
+        evidence_view = evidence.value
+    end
+
+    local normalized = WorldState.normalize_transient_position(
+        position,
+        evidence_view
+    )
+    if not normalized.ok then
+        return normalized
+    end
+
+    if normalized.value.changed then
+        envelope2.payload.world_position = normalized.value.position
+    end
+
+    report.applied = true
+    report.action = normalized.value.action
+    report.changed = normalized.value.changed == true
+    report.evidence_status = normalized.value.evidence_status
+    report.last_landing_receipt_id = normalized.value.last_landing_receipt_id
+    report.last_safe_marker_id = normalized.value.last_safe_marker_id
+    report.cleared_landing_receipt_id = normalized.value.cleared_landing_receipt_id
+    report.reason = normalized.value.evidence_status
+    return result_ok(report)
 end
 
 local function verify_envelope(loaded_value, expected_owner_fingerprint)
@@ -144,6 +217,86 @@ function LoadGameSave.bind(options)
         coordinator = coordinator,
     }
     return result_ok(view)
+end
+
+-- RECONCILE: when orphan proofs fully match durable pending intent, forward
+-- write Manifest-last and adopt the orphan envelopes into this load.
+local function try_forward_orphan_manifest(state, context)
+    local evaluation = OrphanForwardRecovery.evaluate({
+        manifest = context.manifest,
+        intent = context.intent,
+        observations = context.observations,
+        orphan_slot_ids = context.orphan_slots,
+    })
+    if not evaluation.ok then
+        return evaluation
+    end
+    if evaluation.value.action ~= 'FORWARD_MANIFEST' then
+        return result_ok({
+            forwarded = false,
+            evaluation = evaluation.value,
+        })
+    end
+    if type_value(state.coordinator.write_slots) ~= 'function'
+        or type_value(state.coordinator.allocate_transaction_id) ~= 'function'
+    then
+        return result_ok({
+            forwarded = false,
+            evaluation = evaluation.value,
+            reason = 'COORDINATOR_WRITE_UNAVAILABLE',
+        })
+    end
+
+    local payload = RecoverOrphanCheckpoint.build_slot1_payload({
+        next_manifest = evaluation.value.next_manifest,
+        player_profile = context.player_profile,
+        settings_profile = context.settings_profile,
+    })
+    if not payload.ok then
+        return payload
+    end
+    local tx = state.coordinator:allocate_transaction_id('load_orphan_fwd')
+    if not tx.ok then
+        return tx
+    end
+    local written = state.coordinator:write_slots({
+        player_ref = context.player_ref,
+        checkpoint_id = evaluation.value.next_manifest.checkpoint_id,
+        transaction_id = tx.value,
+        request_id = context.request_id .. '_orphan_fwd',
+        content_version = context.content_version or 'content-v1',
+        slot_writes = {
+            {
+                slot_id = 1,
+                expected_revision = context.slot1_revision,
+                payload = payload.value,
+            },
+        },
+    }, context.invoke)
+    if not written.ok then
+        return result_ok({
+            forwarded = false,
+            evaluation = evaluation.value,
+            reason = 'FORWARD_WRITE_FAILED',
+            cause_code = written.error and written.error.code,
+        })
+    end
+    if written.value.status ~= 'COMMITTED' then
+        return result_ok({
+            forwarded = false,
+            evaluation = evaluation.value,
+            reason = 'FORWARD_WRITE_NOT_COMMITTED',
+            status = written.value.status,
+        })
+    end
+
+    return result_ok({
+        forwarded = true,
+        evaluation = evaluation.value,
+        manifest = evaluation.value.next_manifest,
+        slot1_revision = context.slot1_revision + 1,
+        checkpoint_id = evaluation.value.next_manifest.checkpoint_id,
+    })
 end
 
 function Service:load(input, invoke)
@@ -361,6 +514,8 @@ function Service:load(input, invoke)
     }
     local orphan_slots = {}
     local recovery_reasons = {}
+    local observations = {}
+    local pending_intent = nil
     local slot_ids = SlotRevisionVector.list_slot_ids()
     local index
     for index = 1, #slot_ids do
@@ -470,6 +625,20 @@ function Service:load(input, invoke)
                 local matches = actual_revision == expected.value.revision
                     and actual_checkpoint == expected.value.checkpoint_id
                     and actual_checksum == expected.value.payload_checksum
+                local observation = OrphanForwardRecovery.observation_from_envelope(
+                    slot_id,
+                    verified.value
+                )
+                observations[slot_id] = observation
+
+                if pending_intent == nil then
+                    local extracted = PendingCheckpointIntent.extract_from_payload(
+                        verified.value.payload
+                    )
+                    if extracted.ok and extracted.value ~= nil then
+                        pending_intent = extracted.value
+                    end
+                end
 
                 if expected.value.is_absent then
                     -- A written data slot that Manifest still marks absent is an
@@ -526,23 +695,140 @@ function Service:load(input, invoke)
     end
 
     if #recovery_reasons > 0 then
-        return result_ok({
-            mode = 'RECOVERY_REQUIRED',
-            session_instance_id = session_instance_id.value,
-            player_ref = player_ref.value,
-            player_save_scope = profile.value.player_save_scope,
-            committed_manifest_checkpoint = manifest.value.checkpoint_id,
-            slot1_revision = envelope1.value.revision,
-            manifest = copy_table(manifest.value),
-            player_profile = copy_table(profile.value),
-            settings_profile = copy_table(envelope1.value.payload.settings_profile),
-            loaded_envelopes = loaded_envelopes,
-            orphan_slots = orphan_slots,
-            recovery_reasons = recovery_reasons,
-            load_report = load_report,
-            writable = false,
-        })
+        local only_orphans = true
+        for index = 1, #recovery_reasons do
+            if recovery_reasons[index].reason ~= 'ORPHAN_SLOT_WRITE' then
+                only_orphans = false
+                break
+            end
+        end
+
+        local forward = nil
+        if only_orphans and #orphan_slots > 0 then
+            forward = try_forward_orphan_manifest(state, {
+                manifest = manifest.value,
+                intent = pending_intent,
+                observations = observations,
+                orphan_slots = orphan_slots,
+                player_ref = player_ref.value,
+                player_profile = profile.value,
+                settings_profile = envelope1.value.payload.settings_profile,
+                slot1_revision = envelope1.value.revision,
+                request_id = request_id.value,
+                content_version = envelope1.value.content_version,
+                invoke = invoke,
+            })
+            if not forward.ok then
+                return forward
+            end
+        end
+
+        if forward ~= nil and forward.value.forwarded == true then
+            -- Adopt orphan envelopes that match the new committed vector.
+            local adopted = {}
+            local new_manifest = forward.value.manifest
+            for index = 1, #slot_ids do
+                local slot_id = slot_ids[index]
+                local expected = SlotRevisionVector.read_slot(
+                    new_manifest.slot_revision_entries,
+                    slot_id
+                )
+                if not expected.ok then
+                    return expected
+                end
+                local obs = observations[slot_id]
+                if not expected.value.is_absent and obs ~= nil then
+                    if obs.revision == expected.value.revision
+                        and obs.checkpoint_id == expected.value.checkpoint_id
+                        and obs.payload_checksum == expected.value.payload_checksum
+                    then
+                        -- Rebuild envelope view from observation payload.
+                        loaded_envelopes[slot_id] = {
+                            schema_version = obs.schema_version or 1,
+                            revision = obs.revision,
+                            checkpoint_id = obs.checkpoint_id,
+                            payload_checksum = obs.payload_checksum,
+                            owner_fingerprint = expected_fingerprint.value,
+                            payload = obs.payload,
+                        }
+                        adopted[#adopted + 1] = slot_id
+                    end
+                end
+            end
+            load_report.orphan_forward = {
+                action = 'FORWARD_MANIFEST',
+                checkpoint_id = forward.value.checkpoint_id,
+                recovery_epoch = new_manifest.recovery_epoch,
+                adopted_slots = adopted,
+                dirty_slot_ids = forward.value.evaluation.dirty_slot_ids,
+            }
+            manifest = result_ok(new_manifest)
+            envelope1 = result_ok({
+                schema_version = envelope1.value.schema_version,
+                revision = forward.value.slot1_revision,
+                checkpoint_id = forward.value.checkpoint_id,
+                content_version = envelope1.value.content_version,
+                owner_fingerprint = envelope1.value.owner_fingerprint,
+                payload_checksum = envelope1.value.payload_checksum,
+                payload = {
+                    manifest = new_manifest,
+                    player_profile = envelope1.value.payload.player_profile,
+                    settings_profile = envelope1.value.payload.settings_profile,
+                },
+            })
+            loaded_envelopes[1] = copy_table(envelope1.value)
+            orphan_slots = {}
+            recovery_reasons = {}
+        else
+            local evaluation = forward and forward.value.evaluation or {
+                action = 'RECOVERY_REQUIRED',
+                reason = 'PENDING_INTENT_MISSING',
+            }
+            return result_ok({
+                mode = 'RECOVERY_REQUIRED',
+                session_instance_id = session_instance_id.value,
+                player_ref = player_ref.value,
+                player_save_scope = profile.value.player_save_scope,
+                committed_manifest_checkpoint = manifest.value.checkpoint_id,
+                slot1_revision = envelope1.value.revision,
+                manifest = copy_table(manifest.value),
+                player_profile = copy_table(profile.value),
+                settings_profile = copy_table(envelope1.value.payload.settings_profile),
+                loaded_envelopes = loaded_envelopes,
+                orphan_slots = orphan_slots,
+                recovery_reasons = recovery_reasons,
+                orphan_forward = {
+                    action = evaluation.action,
+                    reason = (forward and forward.value.reason) or evaluation.reason,
+                    evaluation = evaluation,
+                },
+                load_report = load_report,
+                writable = false,
+                -- Skip normalize while orphan/corrupt slots block READY.
+                transient_world = {
+                    traversal_session = 'DISCARDED',
+                    applied = false,
+                    action = 'SKIPPED',
+                    reason = 'RECOVERY_REQUIRED',
+                },
+            })
+        end
     end
+
+    local transient = normalize_transient_world(loaded_envelopes)
+    if not transient.ok then
+        return fail(
+            SaveErrorCodes.SAVE_CORRUPT,
+            'TRANSIENT_WORLD_NORMALIZE_FAILED',
+            {
+                session_instance_id = session_instance_id.value,
+                cause = transient.error and transient.error.details,
+                load_report = load_report,
+            },
+            false
+        )
+    end
+    load_report.transient_world = transient.value
 
     return result_ok({
         mode = 'READY',
@@ -560,6 +846,7 @@ function Service:load(input, invoke)
         orphan_slots = {},
         recovery_reasons = {},
         load_report = load_report,
+        transient_world = transient.value,
         writable = true,
     })
 end

@@ -39,6 +39,7 @@ return {
     'wzx.tests.test_encounter_quest_bridge',
     'wzx.tests.test_dialogue_system',
     'wzx.tests.test_world_system',
+    'wzx.tests.test_traversal_system',
     'wzx.tests.test_character_write_use_cases',
     'wzx.tests.test_character_query_and_rename',
     'wzx.tests.test_save_coordinator',

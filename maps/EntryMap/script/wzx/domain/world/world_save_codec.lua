@@ -40,6 +40,8 @@ local POSITION_FIELDS = {
     location_id = true,
     current_marker_id = true,
     last_safe_marker_id = true,
+    last_landing_receipt_id = true,
+    current_cell_id = true,
     facing_octant = true,
 }
 local DISCOVERED_FIELDS = {
@@ -131,6 +133,8 @@ function WorldSaveCodec.encode(state)
         location_id = position.location_id,
         current_marker_id = position.current_marker_id,
         last_safe_marker_id = position.last_safe_marker_id,
+        last_landing_receipt_id = position.last_landing_receipt_id,
+        current_cell_id = position.current_cell_id,
         facing_octant = position.facing_octant or 0,
     }
 
@@ -272,6 +276,25 @@ function WorldSaveCodec.decode(bundle)
             return invalid('MARKER_ID_INVALID')
         end
     end
+    if position.last_landing_receipt_id ~= nil then
+        local checked = validate_derived(
+            position.last_landing_receipt_id,
+            'last_landing_receipt_id'
+        )
+        if not checked.ok then
+            return invalid('LANDING_RECEIPT_INVALID')
+        end
+    end
+    if position.current_cell_id ~= nil then
+        local checked = validate_content(
+            position.current_cell_id,
+            'traversal_cell_',
+            'current_cell_id'
+        )
+        if not checked.ok then
+            return invalid('CURRENT_CELL_INVALID')
+        end
+    end
     local facing = position.facing_octant or 0
     if not is_integer(facing, 0, 7) then
         return invalid('FACING_INVALID')
@@ -281,8 +304,19 @@ function WorldSaveCodec.decode(bundle)
         location_id = position.location_id,
         current_marker_id = position.current_marker_id,
         last_safe_marker_id = position.last_safe_marker_id,
+        last_landing_receipt_id = position.last_landing_receipt_id,
+        current_cell_id = position.current_cell_id,
         facing_octant = facing,
     }
+    if position.last_landing_receipt_id ~= nil then
+        state.landing_receipts[position.last_landing_receipt_id] = {
+            landing_receipt_id = position.last_landing_receipt_id,
+            marker_id = position.last_safe_marker_id or position.current_marker_id,
+            target_cell_id = position.current_cell_id,
+            mode = 'JUMP',
+            world_revision = metadata.world_revision,
+        }
+    end
 
     local discovered = bundle.world_discovered_locations or {}
     local index

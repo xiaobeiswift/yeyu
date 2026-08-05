@@ -3,6 +3,7 @@
 local Result = require 'wzx.domain.common.result'
 local WorldState = require 'wzx.domain.world.world_state'
 local WorldErrorCodes = require 'wzx.domain.world.error_codes'
+local WorldSaveBridge = require 'wzx.application.use_cases.world.world_save_bridge'
 
 local WorldService = {}
 local error_value = error
@@ -56,6 +57,7 @@ function WorldService.bind(options)
     local catalog = raw_get(options, 'catalog')
     local world_store = raw_get(options, 'world_store')
     local economy_service = raw_get(options, 'economy_service')
+    local save_bridge = raw_get(options, 'save_bridge')
     if type_value(catalog) ~= 'table'
         or type_value(catalog.require_location) ~= 'function'
     then
@@ -67,12 +69,23 @@ function WorldService.bind(options)
     if economy_service ~= nil and not is_economy_service(economy_service) then
         return invalid('ECONOMY_SERVICE_INVALID', { field = 'economy_service' })
     end
+    if save_bridge ~= nil and not WorldSaveBridge.is_authority(save_bridge) then
+        return invalid('SAVE_BRIDGE_AUTHORITY_REQUIRED', {
+            field = 'save_bridge',
+        })
+    end
+    if save_bridge ~= nil and world_store == nil then
+        return invalid('WORLD_STORE_REQUIRED_FOR_SAVE_BRIDGE', {
+            field = 'world_store',
+        })
+    end
 
     local view = set_metatable({}, Service)
     STATES[view] = {
         catalog = catalog,
         world_store = world_store,
         economy_service = economy_service,
+        save_bridge = save_bridge,
         state = WorldState.empty(),
     }
     return result_ok(view)
@@ -207,6 +220,93 @@ function Service:get_position()
         return loaded
     end
     return WorldState.get_position(loaded.value)
+end
+
+local function maybe_checkpoint_landing(state, input, committed)
+    if state.save_bridge == nil then
+        return result_ok({
+            status = 'SKIPPED',
+            reason = 'SAVE_BRIDGE_UNBOUND',
+        })
+    end
+    if committed.already_committed == true then
+        return result_ok({
+            status = 'SKIPPED',
+            reason = 'ALREADY_COMMITTED',
+            landing_receipt_id = committed.landing_receipt_id,
+        })
+    end
+    local player_save_scope = raw_get(input, 'player_save_scope')
+    if player_save_scope == nil then
+        return result_ok({
+            status = 'SKIPPED',
+            reason = 'PLAYER_SAVE_SCOPE_MISSING',
+        })
+    end
+    local command_id = raw_get(input, 'active_segment_command_id')
+        or raw_get(input, 'command_id')
+    local request_id = raw_get(input, 'request_id')
+        or (type_value(command_id) == 'string' and (command_id .. '_world_save'))
+        or 'request_world_landing_save'
+    local saved = state.save_bridge:persist_player_world({
+        player_save_scope = player_save_scope,
+        player_ref = raw_get(input, 'player_ref') or player_save_scope,
+        request_id = request_id,
+        command_id = type_value(command_id) == 'string'
+            and (command_id .. '_landing_ckpt')
+            or nil,
+        landing_command_id = type_value(command_id) == 'string' and command_id or nil,
+        landing_receipt_id = committed.landing_receipt_id,
+        outcome_digest = committed.digest,
+        save_seed = raw_get(input, 'save_seed'),
+        content_version = raw_get(input, 'content_version'),
+        reason = 'TRAVERSAL_LANDING_CRITICAL',
+    })
+    if not saved.ok then
+        return saved
+    end
+    return result_ok(saved.value)
+end
+
+function Service:commit_traversal_landing(input)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('SERVICE_AUTHORITY_REQUIRED')
+    end
+    local loaded = load_state(state)
+    if not loaded.ok then
+        return loaded
+    end
+    local committed = WorldState.commit_traversal_landing(loaded.value, input)
+    if not committed.ok then
+        return committed
+    end
+    local persisted = persist_state(state)
+    if not persisted.ok then
+        return persisted
+    end
+    committed.value.persisted = persisted.value.persisted
+
+    -- Safe-ground landing is CRITICAL: after domain + in-memory store commit,
+    -- request SaveCoordinator checkpoint for slot 2 world_position.
+    local checkpoint = maybe_checkpoint_landing(state, input, committed.value)
+    if not checkpoint.ok then
+        return checkpoint
+    end
+    committed.value.save = checkpoint.value
+    return committed
+end
+
+function Service:get_traversal_context(options)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('SERVICE_AUTHORITY_REQUIRED')
+    end
+    local loaded = load_state(state)
+    if not loaded.ok then
+        return loaded
+    end
+    return WorldState.get_traversal_context(loaded.value, options)
 end
 
 function Service:get_flag(flag_id)

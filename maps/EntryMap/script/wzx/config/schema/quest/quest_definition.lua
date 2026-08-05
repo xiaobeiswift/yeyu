@@ -29,6 +29,7 @@ local FIELDS = {
     visibility_policy = true,
     accept_policy = true,
     accept_ref_id = true,
+    prerequisite_quest_id = true,
     first_stage_id = true,
     stage_ids = true,
     reward_policy = true,
@@ -163,6 +164,26 @@ function QuestDefinition.validate(value)
         return validation_invalid(SCHEMA, 'accept_ref_id', 'ACCEPT_REF_REQUIRED')
     end
 
+    err = validation_content_id(
+        SCHEMA,
+        'prerequisite_quest_id',
+        value.prerequisite_quest_id,
+        'quest_',
+        true
+    )
+    if err ~= nil then
+        return err
+    end
+    if value.prerequisite_quest_id ~= nil
+        and value.prerequisite_quest_id == value.id
+    then
+        return validation_invalid(
+            SCHEMA,
+            'prerequisite_quest_id',
+            'PREREQUISITE_SELF_REFERENCE'
+        )
+    end
+
     if #value.stage_ids < 1 or #value.stage_ids > 32 then
         return validation_invalid(SCHEMA, 'stage_ids', 'STAGE_COUNT_OUT_OF_RANGE', {
             minimum = 1,
@@ -218,6 +239,7 @@ function QuestDefinition.validate(value)
         visibility_policy = visibility_policy,
         accept_policy = accept_policy,
         accept_ref_id = value.accept_ref_id,
+        prerequisite_quest_id = value.prerequisite_quest_id,
         first_stage_id = value.first_stage_id,
         stage_ids = copy_strings(value.stage_ids),
         reward_policy = reward_policy,

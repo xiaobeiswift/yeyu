@@ -42,8 +42,12 @@ local OBJECTIVE_TYPES = {
     REACH_LOCATION = true,
     ACQUIRE_ITEM = true,
     OWN_ITEM = true,
+    DELIVER_ITEM = true,
     OPEN_CHEST = true,
     SEARCH_POINT = true,
+    TRAVERSAL_LANDING = true,
+    WATER_WALK_ENTER = true,
+    WATER_WALK_EXIT = true,
 }
 local PROGRESS_SEMANTICS = {
     ACCUMULATE_AFTER_ACCEPT = true,
@@ -58,6 +62,9 @@ local EVENT_TYPES = {
     ItemGranted = true,
     ChestOpened = true,
     SearchPointResolved = true,
+    TraversalLanded = true,
+    WaterWalkEntered = true,
+    WaterWalkExited = true,
 }
 local TARGET_PREFIX = {
     COMPLETE_ENCOUNTER = 'encounter_',
@@ -66,8 +73,12 @@ local TARGET_PREFIX = {
     REACH_LOCATION = 'location_',
     ACQUIRE_ITEM = 'item_',
     OWN_ITEM = 'item_',
+    DELIVER_ITEM = 'item_',
     OPEN_CHEST = 'interact_',
     SEARCH_POINT = 'interact_',
+    TRAVERSAL_LANDING = 'traversal_cell_',
+    WATER_WALK_ENTER = 'water_zone_',
+    WATER_WALK_EXIT = 'water_zone_',
 }
 
 function ObjectiveDefinition.validate(value)
@@ -162,6 +173,9 @@ function ObjectiveDefinition.validate(value)
         or value.objective_type == 'REACH_LOCATION'
         or value.objective_type == 'OPEN_CHEST'
         or value.objective_type == 'SEARCH_POINT'
+        or value.objective_type == 'TRAVERSAL_LANDING'
+        or value.objective_type == 'WATER_WALK_ENTER'
+        or value.objective_type == 'WATER_WALK_EXIT'
     then
         if value.progress_semantics ~= 'ONCE_FACT'
             and value.progress_semantics ~= 'ACCUMULATE_AFTER_ACCEPT'
@@ -192,6 +206,64 @@ function ObjectiveDefinition.validate(value)
         end
         if value.event_type ~= 'EncounterCompleted' then
             return validation_invalid(SCHEMA, 'event_type', 'ENCOUNTER_EVENT_REQUIRED')
+        end
+    end
+    if value.objective_type == 'TRAVERSAL_LANDING'
+        and value.event_type ~= 'TraversalLanded'
+    then
+        return validation_invalid(SCHEMA, 'event_type', 'TRAVERSAL_LANDED_REQUIRED')
+    end
+    if value.objective_type == 'WATER_WALK_ENTER'
+        and value.event_type ~= 'WaterWalkEntered'
+    then
+        return validation_invalid(SCHEMA, 'event_type', 'WATER_ENTER_EVENT_REQUIRED')
+    end
+    if value.objective_type == 'WATER_WALK_EXIT'
+        and value.event_type ~= 'WaterWalkExited'
+    then
+        return validation_invalid(SCHEMA, 'event_type', 'WATER_EXIT_EVENT_REQUIRED')
+    end
+    if value.objective_type == 'ACQUIRE_ITEM' then
+        if value.progress_semantics ~= 'ACCUMULATE_AFTER_ACCEPT' then
+            return validation_invalid(
+                SCHEMA,
+                'progress_semantics',
+                'ACQUIRE_REQUIRES_ACCUMULATE'
+            )
+        end
+        if value.event_type ~= 'ItemGranted' then
+            return validation_invalid(SCHEMA, 'event_type', 'ITEM_GRANTED_REQUIRED')
+        end
+        if value.target_id == nil then
+            return validation_invalid(SCHEMA, 'target_id', 'ITEM_TARGET_REQUIRED')
+        end
+    end
+    if value.objective_type == 'OWN_ITEM' then
+        if value.progress_semantics ~= 'CURRENT_SNAPSHOT' then
+            return validation_invalid(
+                SCHEMA,
+                'progress_semantics',
+                'OWN_REQUIRES_SNAPSHOT'
+            )
+        end
+        if value.target_id == nil then
+            return validation_invalid(SCHEMA, 'target_id', 'ITEM_TARGET_REQUIRED')
+        end
+    end
+    if value.objective_type == 'DELIVER_ITEM' then
+        if value.progress_semantics ~= 'DELIVER_AT_TURN_IN' then
+            return validation_invalid(
+                SCHEMA,
+                'progress_semantics',
+                'DELIVER_REQUIRES_TURN_IN_SEMANTICS'
+            )
+        end
+        if value.target_id == nil then
+            return validation_invalid(SCHEMA, 'target_id', 'ITEM_TARGET_REQUIRED')
+        end
+        -- Delivery readiness is inventory snapshot; no fact event required.
+        if value.event_type ~= nil then
+            return validation_invalid(SCHEMA, 'event_type', 'DELIVER_FORBIDS_EVENT')
         end
     end
 

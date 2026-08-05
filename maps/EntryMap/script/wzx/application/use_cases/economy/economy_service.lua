@@ -76,6 +76,14 @@ local function maybe_persist_save(self, input)
     if state == nil then
         return result_ok({ status = 'SKIPPED' })
     end
+    -- Parent sagas (e.g. quest completion multi-slot checkpoint) defer cloud
+    -- writes by setting skip_save=true after in-memory owner mutations.
+    if type_value(input) == 'table' and raw_get(input, 'skip_save') == true then
+        return result_ok({
+            status = 'SKIPPED',
+            reason = 'SKIP_SAVE',
+        })
+    end
     local player_save_scope = raw_get(input, 'player_save_scope')
     if player_save_scope == nil then
         return result_ok({
@@ -488,6 +496,7 @@ function Service:grant_prepared_reward(input)
                 .. '_inventory',
             save_seed = raw_get(input, 'save_seed'),
             content_version = raw_get(input, 'content_version'),
+            skip_save = raw_get(input, 'skip_save') == true,
         })
         if not granted_items.ok then
             return granted_items

@@ -204,6 +204,15 @@ local function validate_cross_references(registries)
                 reference_id = quest.first_stage_id,
             })
         end
+        if quest.prerequisite_quest_id ~= nil then
+            local prereq = registries.quest_definitions:get(quest.prerequisite_quest_id)
+            if not prereq.ok then
+                return invalid('prerequisite_quest_id', 'REFERENCE_NOT_FOUND', {
+                    quest_id = quest.id,
+                    reference_id = quest.prerequisite_quest_id,
+                })
+            end
+        end
     end
 
     return result_ok(true)

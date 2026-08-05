@@ -92,4 +92,21 @@ function Store:encode_bundle()
     return QuestSaveCodec.encode(state.session)
 end
 
+function Store:export_save_bundle()
+    return self:encode_bundle()
+end
+
+function Store:import_save_bundle(bundle)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local decoded = QuestSaveCodec.decode(bundle)
+    if not decoded.ok then
+        return decoded
+    end
+    state.session = decoded.value
+    return result_ok(true)
+end
+
 return FakeQuestStore

@@ -40,6 +40,14 @@ local function invalid(reason, details)
 end
 
 local function maybe_persist_save(self, input)
+    -- Parent sagas set skip_save before any bridge check so the reason is stable
+    -- even when this service has no bound save_bridge of its own.
+    if type_value(input) == 'table' and raw_get(input, 'skip_save') == true then
+        return result_ok({
+            status = 'SKIPPED',
+            reason = 'SKIP_SAVE',
+        })
+    end
     local state = STATES[self]
     if state == nil or state.save_bridge == nil then
         return result_ok({ status = 'SKIPPED' })

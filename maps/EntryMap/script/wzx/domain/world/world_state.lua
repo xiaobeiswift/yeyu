@@ -41,6 +41,8 @@ function WorldState.empty()
             location_id = nil,
             current_marker_id = nil,
             last_safe_marker_id = nil,
+            last_landing_receipt_id = nil,
+            current_cell_id = nil,
             facing_octant = 0,
         },
         discovered = {},
@@ -48,6 +50,7 @@ function WorldState.empty()
         interactables = {},
         event_receipts = {},
         command_receipts = {},
+        landing_receipts = {},
     }
 end
 
@@ -71,6 +74,8 @@ local function copy_position(position)
         location_id = position.location_id,
         current_marker_id = position.current_marker_id,
         last_safe_marker_id = position.last_safe_marker_id,
+        last_landing_receipt_id = position.last_landing_receipt_id,
+        current_cell_id = position.current_cell_id,
         facing_octant = position.facing_octant or 0,
     }
 end
@@ -163,6 +168,8 @@ function WorldState.bootstrap_position(state, catalog, input)
         location_id = location.id,
         current_marker_id = marker_id,
         last_safe_marker_id = location.safe_return_marker_id or marker_id,
+        last_landing_receipt_id = state.position.last_landing_receipt_id,
+        current_cell_id = raw_get(input, 'current_cell_id') or state.position.current_cell_id,
         facing_octant = facing,
     }
     state.world_revision = state.world_revision + 1
@@ -211,6 +218,8 @@ function WorldState.enter_location(state, catalog, input)
         last_safe_marker_id = location.safe_return_marker_id
             or state.position.last_safe_marker_id
             or marker_id,
+        last_landing_receipt_id = state.position.last_landing_receipt_id,
+        current_cell_id = raw_get(input, 'current_cell_id') or state.position.current_cell_id,
         facing_octant = facing,
     }
     state.world_revision = state.world_revision + 1
@@ -487,6 +496,278 @@ function WorldState.get_position(state)
         return invalid('STATE_REQUIRED')
     end
     return result_ok(copy_position(state.position))
+end
+
+-- System 12 owns landing receipt generation and safe-ground position commit.
+-- Canonical tuple identity matches system 26 TraversalRuntime.landing_tuple.
+function WorldState.commit_traversal_landing(state, input)
+    if type_value(state) ~= 'table' or get_metatable(state) ~= nil then
+        return invalid('STATE_REQUIRED')
+    end
+    if type_value(input) ~= 'table' or get_metatable(input) ~= nil then
+        return invalid('INPUT_REQUIRED')
+    end
+
+    local TraversalRuntime = require 'wzx.domain.traversal.runtime'
+    local marker_id = raw_get(input, 'marker_id')
+    local target_cell_id = raw_get(input, 'target_cell_id')
+    local command_id = raw_get(input, 'active_segment_command_id')
+        or raw_get(input, 'command_id')
+    local mode = raw_get(input, 'mode') or 'JUMP'
+
+    local marker_ok = RuntimeId.validate_content(marker_id, 'marker_', 'marker_id')
+    if not marker_ok.ok then
+        return fail(WorldErrorCodes.WORLD_MARKER_UNKNOWN, 'MARKER_ID_INVALID', {
+            marker_id = marker_id,
+        })
+    end
+    local cell_ok = RuntimeId.validate_content(
+        target_cell_id,
+        'traversal_cell_',
+        'target_cell_id'
+    )
+    if not cell_ok.ok then
+        return fail(WorldErrorCodes.WORLD_CELL_UNKNOWN, 'TARGET_CELL_INVALID', {
+            target_cell_id = target_cell_id,
+        })
+    end
+
+    local tuple_input = {
+        player_save_scope = raw_get(input, 'player_save_scope') or 'player_default',
+        traversal_session_id = raw_get(input, 'traversal_session_id'),
+        active_segment_command_id = command_id,
+        segment_sequence = raw_get(input, 'segment_sequence'),
+        target_cell_id = target_cell_id,
+        rules_version = raw_get(input, 'rules_version') or 1,
+    }
+    local derived = TraversalRuntime.landing_tuple(tuple_input)
+    if not derived.ok then
+        return fail(
+            WorldErrorCodes.WORLD_ARGUMENT_INVALID,
+            'LANDING_TUPLE_INVALID',
+            {
+                cause_code = derived.error and derived.error.code or 'UNKNOWN',
+                cause_reason = derived.error
+                    and derived.error.details
+                    and derived.error.details.reason,
+            }
+        )
+    end
+    local landing_receipt_id = derived.value.landing_receipt_id
+    local expected = raw_get(input, 'landing_receipt_id')
+        or raw_get(input, 'expected_landing_receipt_id')
+    if expected ~= nil and expected ~= landing_receipt_id then
+        return fail(
+            WorldErrorCodes.WORLD_LANDING_RECEIPT_CONFLICT,
+            'LANDING_RECEIPT_MISMATCH',
+            {
+                expected = expected,
+                actual = landing_receipt_id,
+            }
+        )
+    end
+
+    if type_value(command_id) == 'string' and command_id ~= '' then
+        local prior_command = state.command_receipts[command_id]
+        if prior_command ~= nil and prior_command.kind == 'TRAVERSAL_LANDING' then
+            if prior_command.receipt_id ~= landing_receipt_id then
+                return fail(
+                    WorldErrorCodes.WORLD_LANDING_RECEIPT_CONFLICT,
+                    'COMMAND_LANDING_RECEIPT_MISMATCH',
+                    {
+                        command_id = command_id,
+                        expected = prior_command.receipt_id,
+                        actual = landing_receipt_id,
+                    }
+                )
+            end
+            return result_ok({
+                already_committed = true,
+                landing_receipt_id = landing_receipt_id,
+                marker_id = prior_command.marker_id or marker_id,
+                target_cell_id = prior_command.target_cell_id or target_cell_id,
+                position = copy_position(state.position),
+                world_revision = state.world_revision,
+                mode = mode,
+            })
+        end
+    end
+
+    local prior_landing = state.landing_receipts[landing_receipt_id]
+    if prior_landing ~= nil then
+        return result_ok({
+            already_committed = true,
+            landing_receipt_id = landing_receipt_id,
+            marker_id = prior_landing.marker_id,
+            target_cell_id = prior_landing.target_cell_id,
+            position = copy_position(state.position),
+            world_revision = state.world_revision,
+            mode = prior_landing.mode or mode,
+        })
+    end
+
+    local location_id = raw_get(input, 'location_id') or state.position.location_id
+    local area_id = raw_get(input, 'area_id') or state.position.area_id
+    local facing = raw_get(input, 'facing_octant')
+    if facing == nil then
+        facing = state.position.facing_octant or 0
+    elseif type_value(facing) ~= 'number'
+        or facing ~= math.floor(facing)
+        or facing < 0
+        or facing > 7
+    then
+        return invalid('FACING_INVALID')
+    end
+
+    state.position = {
+        area_id = area_id,
+        location_id = location_id,
+        current_marker_id = marker_id,
+        last_safe_marker_id = marker_id,
+        last_landing_receipt_id = landing_receipt_id,
+        current_cell_id = target_cell_id,
+        facing_octant = facing,
+    }
+    state.world_revision = state.world_revision + 1
+    state.landing_receipts[landing_receipt_id] = {
+        landing_receipt_id = landing_receipt_id,
+        marker_id = marker_id,
+        target_cell_id = target_cell_id,
+        traversal_session_id = tuple_input.traversal_session_id,
+        active_segment_command_id = command_id,
+        segment_sequence = tuple_input.segment_sequence,
+        mode = mode,
+        world_revision = state.world_revision,
+    }
+    if type_value(command_id) == 'string' and command_id ~= '' then
+        state.command_receipts[command_id] = {
+            command_id = command_id,
+            kind = 'TRAVERSAL_LANDING',
+            receipt_id = landing_receipt_id,
+            marker_id = marker_id,
+            target_cell_id = target_cell_id,
+        }
+    end
+
+    return result_ok({
+        already_committed = false,
+        landing_receipt_id = landing_receipt_id,
+        marker_id = marker_id,
+        target_cell_id = target_cell_id,
+        position = copy_position(state.position),
+        world_revision = state.world_revision,
+        mode = mode,
+        digest = derived.value.digest,
+    })
+end
+
+function WorldState.get_traversal_context(state, options)
+    if type_value(state) ~= 'table' or get_metatable(state) ~= nil then
+        return invalid('STATE_REQUIRED')
+    end
+    options = options or {}
+    local position = state.position or {}
+    local origin_cell_id = position.current_cell_id or raw_get(options, 'default_origin_cell_id')
+    if type_value(origin_cell_id) ~= 'string' then
+        return fail(
+            WorldErrorCodes.WORLD_CELL_UNKNOWN,
+            'ORIGIN_CELL_UNKNOWN'
+        )
+    end
+    return result_ok({
+        actor_id = raw_get(options, 'actor_id') or 'char_hero',
+        origin_cell_id = origin_cell_id,
+        last_safe_marker_id = position.last_safe_marker_id,
+        current_marker_id = position.current_marker_id,
+        last_landing_receipt_id = position.last_landing_receipt_id,
+        location_id = position.location_id,
+        area_id = position.area_id,
+        spatial_revision = raw_get(options, 'spatial_revision') or 0,
+        world_revision = state.world_revision or 0,
+        player_save_scope = raw_get(options, 'player_save_scope') or 'player_default',
+        input_locked = raw_get(options, 'input_locked') == true,
+        lock_reason = raw_get(options, 'lock_reason'),
+    })
+end
+
+-- Load-time NORMALIZE_TRANSIENT_WORLD position rule (system 12).
+-- Never trusts mid-air/water residual coords. Landing is kept only when
+-- evidence says MATCHED; otherwise snap to last_safe_marker_id and drop
+-- untrusted landing receipt / current_cell_id. In-memory only until next save.
+function WorldState.normalize_transient_position(position, evidence)
+    if type_value(position) ~= 'table' or get_metatable(position) ~= nil then
+        return invalid('POSITION_REQUIRED')
+    end
+    if type_value(evidence) ~= 'table' then
+        return invalid('EVIDENCE_REQUIRED')
+    end
+
+    local next_position = copy_position(position)
+    local status = evidence.status
+    local matched = evidence.matched == true
+
+    if matched or status == 'MATCHED' then
+        return result_ok({
+            position = next_position,
+            action = 'KEEP_LANDING',
+            changed = false,
+            evidence_status = status or 'MATCHED',
+            last_landing_receipt_id = next_position.last_landing_receipt_id,
+            last_safe_marker_id = next_position.last_safe_marker_id,
+        })
+    end
+
+    if status == 'NO_LANDING' then
+        local safe = next_position.last_safe_marker_id
+        local changed = false
+        if type_value(safe) == 'string'
+            and safe ~= ''
+            and next_position.current_marker_id ~= safe
+        then
+            next_position.current_marker_id = safe
+            -- Drop residual cell when forced back to safe; exploration origin
+            -- cells at the safe marker may remain when already aligned.
+            next_position.current_cell_id = nil
+            changed = true
+        end
+        return result_ok({
+            position = next_position,
+            action = changed and 'SNAP_TO_LAST_SAFE' or 'KEEP_SAFE',
+            changed = changed,
+            evidence_status = 'NO_LANDING',
+            last_landing_receipt_id = nil,
+            last_safe_marker_id = next_position.last_safe_marker_id,
+        })
+    end
+
+    -- Evidence insufficient for last_landing_receipt_id: fall back to safe.
+    local prior_receipt = next_position.last_landing_receipt_id
+    local safe = next_position.last_safe_marker_id
+    local changed = false
+    if type_value(safe) == 'string' and safe ~= '' then
+        if next_position.current_marker_id ~= safe then
+            next_position.current_marker_id = safe
+            changed = true
+        end
+    end
+    if next_position.last_landing_receipt_id ~= nil then
+        next_position.last_landing_receipt_id = nil
+        changed = true
+    end
+    if next_position.current_cell_id ~= nil then
+        next_position.current_cell_id = nil
+        changed = true
+    end
+
+    return result_ok({
+        position = next_position,
+        action = 'SNAP_TO_LAST_SAFE',
+        changed = changed,
+        evidence_status = status or 'EVIDENCE_INSUFFICIENT',
+        cleared_landing_receipt_id = prior_receipt,
+        last_landing_receipt_id = nil,
+        last_safe_marker_id = next_position.last_safe_marker_id,
+    })
 end
 
 function WorldState.list_discovered(state)

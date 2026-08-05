@@ -64,6 +64,8 @@ local function copy_state(state)
             location_id = position.location_id,
             current_marker_id = position.current_marker_id,
             last_safe_marker_id = position.last_safe_marker_id,
+            last_landing_receipt_id = position.last_landing_receipt_id,
+            current_cell_id = position.current_cell_id,
             facing_octant = position.facing_octant or 0,
         },
         discovered = copy_map(state.discovered or {}),
@@ -71,6 +73,7 @@ local function copy_state(state)
         interactables = copy_map(state.interactables or {}),
         event_receipts = copy_map(state.event_receipts or {}),
         command_receipts = copy_map(state.command_receipts or {}),
+        landing_receipts = copy_map(state.landing_receipts or {}),
     })
 end
 
@@ -124,6 +127,27 @@ function Store:encode_bundle()
         return invalid('STORE_AUTHORITY_REQUIRED')
     end
     return WorldSaveCodec.encode(state.state)
+end
+
+function Store:export_save_bundle()
+    return self:encode_bundle()
+end
+
+function Store:import_save_bundle(bundle)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local decoded = WorldSaveCodec.decode(bundle)
+    if not decoded.ok then
+        return decoded
+    end
+    local copied = copy_state(decoded.value)
+    if not copied.ok then
+        return copied
+    end
+    state.state = copied.value
+    return result_ok(true)
 end
 
 return FakeWorldStore

@@ -27,6 +27,12 @@ local BUNDLE_FIELDS = {
     quest_runs = true,
     quest_objectives = true,
     quest_event_receipts = true,
+    revealed_hidden_quests = true,
+    tracked_quest_runs = true,
+}
+local TRACKED_FIELDS = {
+    tracking_position = true,
+    run_id = true,
 }
 local METADATA_FIELDS = {
     schema_version = true,
@@ -40,6 +46,7 @@ local RUN_FIELDS = {
     current_stage_id = true,
     accept_receipt_id = true,
     completion_receipt_id = true,
+    reward_receipt_id = true,
     quest_revision = true,
     stage_entry_ordinal = true,
     reward_policy = true,
@@ -47,6 +54,8 @@ local RUN_FIELDS = {
     turn_in_npc_id = true,
     abandon_policy = true,
     category = true,
+    source_event_id = true,
+    prerequisite_quest_id = true,
 }
 local OBJECTIVE_FIELDS = {
     run_id = true,
@@ -134,7 +143,7 @@ function QuestSaveCodec.encode(session)
         if err ~= nil then
             return err
         end
-        quest_runs[index] = {
+        local encoded_run = {
             run_id = run.run_id,
             quest_id = run.quest_id,
             definition_version = run.definition_version,
@@ -142,6 +151,7 @@ function QuestSaveCodec.encode(session)
             current_stage_id = run.current_stage_id,
             accept_receipt_id = run.accept_receipt_id,
             completion_receipt_id = run.completion_receipt_id,
+            reward_receipt_id = run.reward_receipt_id,
             quest_revision = run.quest_revision,
             stage_entry_ordinal = run.stage_entry_ordinal,
             reward_policy = run.reward_policy,
@@ -150,6 +160,13 @@ function QuestSaveCodec.encode(session)
             abandon_policy = run.abandon_policy,
             category = run.category,
         }
+        if run.source_event_id ~= nil then
+            encoded_run.source_event_id = run.source_event_id
+        end
+        if run.prerequisite_quest_id ~= nil then
+            encoded_run.prerequisite_quest_id = run.prerequisite_quest_id
+        end
+        quest_runs[index] = encoded_run
     end
 
     local objective_keys = {}
@@ -192,6 +209,43 @@ function QuestSaveCodec.encode(session)
         }
     end
 
+    local revealed = {}
+    local revealed_ids = {}
+    for key in raw_next, (session.revealed_hidden_quests or {}) do
+        if session.revealed_hidden_quests[key] == true then
+            revealed_ids[#revealed_ids + 1] = key
+        end
+    end
+    table_sort(revealed_ids, bytewise_string_less)
+    for index = 1, #revealed_ids do
+        local quest_id = revealed_ids[index]
+        local checked = validate_content(quest_id, 'quest_', 'quest_id')
+        if not checked.ok then
+            return invalid('REVEALED_QUEST_ID_INVALID', { quest_id = quest_id })
+        end
+        revealed[index] = quest_id
+    end
+
+    local tracked_quest_runs = {}
+    local tracked = session.tracked_run_ids or {}
+    local position
+    for position = 1, 3 do
+        local run_id = tracked[position]
+        if type_value(run_id) == 'string' and run_id ~= '' then
+            local checked = validate_derived(run_id, 'run_id')
+            if not checked.ok then
+                return invalid('TRACKED_RUN_ID_INVALID', {
+                    tracking_position = position,
+                    run_id = run_id,
+                })
+            end
+            tracked_quest_runs[#tracked_quest_runs + 1] = {
+                tracking_position = position,
+                run_id = run_id,
+            }
+        end
+    end
+
     return result_ok({
         quest_metadata = {
             schema_version = CURRENT_SCHEMA_VERSION,
@@ -200,6 +254,8 @@ function QuestSaveCodec.encode(session)
         quest_runs = quest_runs,
         quest_objectives = quest_objectives,
         quest_event_receipts = quest_event_receipts,
+        revealed_hidden_quests = revealed,
+        tracked_quest_runs = tracked_quest_runs,
     })
 end
 
@@ -239,6 +295,7 @@ function QuestSaveCodec.decode(bundle)
             current_stage_id = run.current_stage_id,
             accept_receipt_id = run.accept_receipt_id,
             completion_receipt_id = run.completion_receipt_id,
+            reward_receipt_id = run.reward_receipt_id,
             quest_revision = run.quest_revision,
             stage_entry_ordinal = run.stage_entry_ordinal,
             reward_policy = run.reward_policy,
@@ -246,6 +303,8 @@ function QuestSaveCodec.decode(bundle)
             turn_in_npc_id = run.turn_in_npc_id,
             abandon_policy = run.abandon_policy,
             category = run.category,
+            source_event_id = run.source_event_id,
+            prerequisite_quest_id = run.prerequisite_quest_id,
         }
     end
     for index = 1, #(bundle.quest_objectives or {}) do
@@ -275,6 +334,42 @@ function QuestSaveCodec.decode(bundle)
             event_type = row.event_type,
             applied_change_count = row.applied_change_count,
         }
+    end
+    session.revealed_hidden_quests = {}
+    for index = 1, #(bundle.revealed_hidden_quests or {}) do
+        local quest_id = bundle.revealed_hidden_quests[index]
+        local checked = validate_content(quest_id, 'quest_', 'quest_id')
+        if not checked.ok then
+            return invalid('REVEALED_QUEST_ID_INVALID', {
+                field = 'revealed_hidden_quests[' .. index .. ']',
+            })
+        end
+        session.revealed_hidden_quests[quest_id] = true
+    end
+    session.tracked_run_ids = {}
+    for index = 1, #(bundle.tracked_quest_runs or {}) do
+        local row = bundle.tracked_quest_runs[index]
+        err = no_unknown_fields(row, TRACKED_FIELDS, 'tracked_quest_runs')
+        if err ~= nil then
+            return err
+        end
+        if not is_integer(row.tracking_position, 1, 3) then
+            return invalid('TRACKING_POSITION_INVALID', {
+                field = 'tracked_quest_runs[' .. index .. '].tracking_position',
+            })
+        end
+        local checked = validate_derived(row.run_id, 'run_id')
+        if not checked.ok then
+            return invalid('TRACKED_RUN_ID_INVALID', {
+                field = 'tracked_quest_runs[' .. index .. '].run_id',
+            })
+        end
+        if session.tracked_run_ids[row.tracking_position] ~= nil then
+            return invalid('DUPLICATE_TRACKING_POSITION', {
+                tracking_position = row.tracking_position,
+            })
+        end
+        session.tracked_run_ids[row.tracking_position] = row.run_id
     end
     return result_ok(session)
 end

@@ -5,6 +5,8 @@ local SaveErrorCodes = require 'wzx.domain.save.error_codes'
 local SaveManifest = require 'wzx.domain.save.save_manifest'
 local SlotRevisionVector = require 'wzx.domain.save.slot_revision_vector'
 local TableShape = require 'wzx.domain.common.table_shape'
+local SlotPayloadUtil = require 'wzx.application.save.slot_payload_util'
+local PendingCheckpointIntent = require 'wzx.domain.save.pending_checkpoint_intent'
 
 local SaveCheckpoint = {}
 local error_value = error
@@ -14,8 +16,10 @@ local raw_get = rawget
 local result_err = Result.err
 local result_ok = Result.ok
 local set_metatable = setmetatable
+local table_sort = table.sort
 local type_value = type
 local validate_component = RuntimeId.validate_component
+local validate_derived = RuntimeId.validate_derived
 
 local Service = {}
 Service.__index = Service
@@ -48,6 +52,7 @@ function SaveCheckpoint.bind(options)
     local coordinator = raw_get(options, 'coordinator')
     if type_value(coordinator) ~= 'table'
         or type_value(coordinator.write_slots) ~= 'function'
+        or type_value(coordinator.load_slot) ~= 'function'
         or type_value(coordinator.allocate_checkpoint_id) ~= 'function'
         or type_value(coordinator.allocate_transaction_id) ~= 'function'
     then
@@ -144,9 +149,21 @@ function Service:save(input, invoke)
         return invalid('DIRTY_SLOTS_REQUIRED', { field = 'dirty_slots' })
     end
 
-    local checkpoint = state.coordinator:allocate_checkpoint_id('checkpoint')
-    if not checkpoint.ok then
-        return checkpoint
+    -- Optional pre-allocated checkpoint_id lets callers freeze recovery evidence
+    -- that must reference the same target checkpoint in the same write.
+    local checkpoint
+    local provided_checkpoint = raw_get(input, 'checkpoint_id')
+    if provided_checkpoint ~= nil then
+        local checked = validate_derived(provided_checkpoint, 'checkpoint_id')
+        if not checked.ok then
+            return invalid('CHECKPOINT_ID_INVALID', { field = 'checkpoint_id' })
+        end
+        checkpoint = result_ok(checked.value)
+    else
+        checkpoint = state.coordinator:allocate_checkpoint_id('checkpoint')
+        if not checkpoint.ok then
+            return checkpoint
+        end
     end
     local data_tx = state.coordinator:allocate_transaction_id('ckpt_data')
     if not data_tx.ok then
@@ -165,7 +182,16 @@ function Service:save(input, invoke)
     end
     next_entries = next_entries.value
 
-    local data_writes = {}
+    local content_version = raw_get(input, 'content_version') or 'content-v1'
+    local write_pending_intent = raw_get(input, 'write_pending_intent')
+    if write_pending_intent == nil then
+        write_pending_intent = true
+    end
+
+    -- Parse dirty rows first. Slot 5 may be rebuilt after non-5 envelopes so the
+    -- pending intent can omit its own checksum (carrier self-hash safety).
+    local pending_rows = {}
+    local slot5_row = nil
     local index
     for index = 1, #dirty_slots do
         local row = dirty_slots[index]
@@ -192,12 +218,25 @@ function Service:save(input, invoke)
                 field = 'dirty_slots[' .. tostring(index) .. '].payload',
             })
         end
+        if slot_id == 5 then
+            if slot5_row ~= nil then
+                return invalid('DIRTY_SLOT_IDS_MUST_BE_UNIQUE', { slot_id = 5 })
+            end
+            slot5_row = row
+        else
+            pending_rows[#pending_rows + 1] = row
+        end
+    end
 
+    local data_writes = {}
+    local dirty_proofs = {}
+    for index = 1, #pending_rows do
+        local row = pending_rows[index]
         local envelope = SaveEnvelope.build({
             player_save_scope = player_save_scope.value,
             revision = row.expected_revision + 1,
             checkpoint_id = checkpoint.value,
-            content_version = raw_get(input, 'content_version') or 'content-v1',
+            content_version = content_version,
             payload = row.payload,
             written_at = raw_get(input, 'written_at'),
             schema_version = row.schema_version or 1,
@@ -207,7 +246,7 @@ function Service:save(input, invoke)
         end
 
         local updated = SlotRevisionVector.write_slot(next_entries, {
-            slot_id = slot_id,
+            slot_id = row.slot_id,
             schema_version = envelope.value.schema_version,
             revision = envelope.value.revision,
             checkpoint_id = envelope.value.checkpoint_id,
@@ -218,7 +257,7 @@ function Service:save(input, invoke)
         end
         next_entries = updated.value
         data_writes[#data_writes + 1] = {
-            slot_id = slot_id,
+            slot_id = row.slot_id,
             expected_revision = row.expected_revision,
             payload = row.payload,
             schema_version = envelope.value.schema_version,
@@ -228,9 +267,173 @@ function Service:save(input, invoke)
                 payload_checksum = envelope.value.payload_checksum,
             },
         }
+        dirty_proofs[#dirty_proofs + 1] = {
+            slot_id = row.slot_id,
+            schema_version = envelope.value.schema_version,
+            revision = envelope.value.revision,
+            payload_checksum = envelope.value.payload_checksum,
+        }
     end
 
-    table.sort(data_writes, function(left, right)
+    local pending_intent_written = false
+    local pending_intent_section = nil
+    local needs_slot5 = (#data_writes > 0 or slot5_row ~= nil)
+        and write_pending_intent == true
+    if needs_slot5 then
+        local slot5_expected_revision
+        local slot5_base_payload
+        local slot5_schema_version = 1
+        if slot5_row ~= nil then
+            slot5_expected_revision = slot5_row.expected_revision
+            slot5_base_payload = slot5_row.payload
+            slot5_schema_version = slot5_row.schema_version or 1
+        else
+            local loaded5 = SlotPayloadUtil.load_slot_state(
+                state.coordinator,
+                invoke,
+                player_ref.value,
+                5,
+                request_id.value .. '_load5_intent'
+            )
+            if not loaded5.ok then
+                return loaded5
+            end
+            local base_slot5 = SlotRevisionVector.read_slot(
+                manifest_ok.value.slot_revision_entries,
+                5
+            )
+            if not base_slot5.ok then
+                return base_slot5
+            end
+            -- Prefer manifest revision as the write base; loaded revision must
+            -- agree when the slot is present.
+            slot5_expected_revision = base_slot5.value.revision
+            if loaded5.value.present
+                and loaded5.value.expected_revision ~= base_slot5.value.revision
+            then
+                return fail(
+                    SaveErrorCodes.SAVE_REVISION_CONFLICT,
+                    'SLOT5_REVISION_MISMATCH_FOR_INTENT',
+                    {
+                        manifest_revision = base_slot5.value.revision,
+                        loaded_revision = loaded5.value.expected_revision,
+                    },
+                    false
+                )
+            end
+            slot5_base_payload = loaded5.value.payload
+        end
+
+        dirty_proofs[#dirty_proofs + 1] = {
+            slot_id = 5,
+            schema_version = slot5_schema_version,
+            revision = slot5_expected_revision + 1,
+            -- Carrier omits checksum; recovery binds observed envelope.
+        }
+
+        local intent = PendingCheckpointIntent.build({
+            command_id = command_id.value,
+            target_checkpoint_id = checkpoint.value,
+            base_manifest_checkpoint_id = manifest_ok.value.checkpoint_id,
+            base_slot1_revision = input.base_slot1_revision,
+            state = 'DATA_WRITTEN',
+            dirty_slot_proofs = dirty_proofs,
+        })
+        if not intent.ok then
+            return fail(
+                SaveErrorCodes.SAVE_CHECKPOINT_INVALID,
+                'PENDING_INTENT_BUILD_FAILED',
+                { cause = intent.error and intent.error.details },
+                false
+            )
+        end
+        local intent_section = PendingCheckpointIntent.to_section(intent.value)
+        if not intent_section.ok then
+            return intent_section
+        end
+        pending_intent_section = intent_section.value
+
+        local merged5 = SlotPayloadUtil.merge_sections(slot5_base_payload, {
+            save_pending_checkpoint = pending_intent_section,
+        })
+        if not merged5.ok then
+            return merged5
+        end
+
+        local envelope5 = SaveEnvelope.build({
+            player_save_scope = player_save_scope.value,
+            revision = slot5_expected_revision + 1,
+            checkpoint_id = checkpoint.value,
+            content_version = content_version,
+            payload = merged5.value,
+            written_at = raw_get(input, 'written_at'),
+            schema_version = slot5_schema_version,
+        })
+        if not envelope5.ok then
+            return envelope5
+        end
+        local updated5 = SlotRevisionVector.write_slot(next_entries, {
+            slot_id = 5,
+            schema_version = envelope5.value.schema_version,
+            revision = envelope5.value.revision,
+            checkpoint_id = envelope5.value.checkpoint_id,
+            payload_checksum = envelope5.value.payload_checksum,
+        })
+        if not updated5.ok then
+            return updated5
+        end
+        next_entries = updated5.value
+        data_writes[#data_writes + 1] = {
+            slot_id = 5,
+            expected_revision = slot5_expected_revision,
+            payload = merged5.value,
+            schema_version = envelope5.value.schema_version,
+            proof = {
+                revision = envelope5.value.revision,
+                checkpoint_id = envelope5.value.checkpoint_id,
+                payload_checksum = envelope5.value.payload_checksum,
+            },
+        }
+        pending_intent_written = true
+    elseif slot5_row ~= nil then
+        -- Explicit opt-out of pending intent: still write caller slot 5 as given.
+        local envelope = SaveEnvelope.build({
+            player_save_scope = player_save_scope.value,
+            revision = slot5_row.expected_revision + 1,
+            checkpoint_id = checkpoint.value,
+            content_version = content_version,
+            payload = slot5_row.payload,
+            written_at = raw_get(input, 'written_at'),
+            schema_version = slot5_row.schema_version or 1,
+        })
+        if not envelope.ok then
+            return envelope
+        end
+        local updated = SlotRevisionVector.write_slot(next_entries, {
+            slot_id = 5,
+            schema_version = envelope.value.schema_version,
+            revision = envelope.value.revision,
+            checkpoint_id = envelope.value.checkpoint_id,
+            payload_checksum = envelope.value.payload_checksum,
+        })
+        if not updated.ok then
+            return updated
+        end
+        next_entries = updated.value
+        data_writes[#data_writes + 1] = {
+            slot_id = 5,
+            expected_revision = slot5_row.expected_revision,
+            payload = slot5_row.payload,
+            schema_version = envelope.value.schema_version,
+            proof = {
+                revision = envelope.value.revision,
+                checkpoint_id = envelope.value.checkpoint_id,
+                payload_checksum = envelope.value.payload_checksum,
+            },
+        }
+    end
+
+    table_sort(data_writes, function(left, right)
         return left.slot_id < right.slot_id
     end)
     local previous = 0
@@ -258,7 +461,7 @@ function Service:save(input, invoke)
             checkpoint_id = checkpoint.value,
             transaction_id = data_tx.value,
             request_id = request_id.value .. '_data',
-            content_version = raw_get(input, 'content_version') or 'content-v1',
+            content_version = content_version,
             written_at = raw_get(input, 'written_at'),
             slot_writes = slot_writes,
         }, invoke)
@@ -347,7 +550,7 @@ function Service:save(input, invoke)
         checkpoint_id = checkpoint.value,
         transaction_id = manifest_tx.value,
         request_id = request_id.value .. '_manifest',
-        content_version = raw_get(input, 'content_version') or 'content-v1',
+        content_version = content_version,
         written_at = raw_get(input, 'written_at'),
         slot_writes = {
             {
@@ -406,6 +609,8 @@ function Service:save(input, invoke)
         dirty_slot_count = #data_writes,
         data_transaction_id = data_tx.value,
         manifest_transaction_id = manifest_tx.value,
+        pending_intent_written = pending_intent_written,
+        pending_intent = pending_intent_section,
     })
 end
 

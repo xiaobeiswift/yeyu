@@ -31,6 +31,20 @@ local DEFINITIONS = {
         validator_id = 'validator_quest_event_receipts_v1',
         codec_id = 'codec_quest_save_bundle_v1',
     },
+    {
+        section_key = 'revealed_hidden_quests',
+        section_path = 'revealed_hidden_quests',
+        slot_id = 2,
+        validator_id = 'validator_revealed_hidden_quests_v1',
+        codec_id = 'codec_quest_save_bundle_v1',
+    },
+    {
+        section_key = 'tracked_quest_runs',
+        section_path = 'tracked_quest_runs',
+        slot_id = 2,
+        validator_id = 'validator_tracked_quest_runs_v1',
+        codec_id = 'codec_quest_save_bundle_v1',
+    },
 }
 
 local function definition_copy(source)

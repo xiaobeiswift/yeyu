@@ -161,6 +161,37 @@ function FactProjector.project(objective, event)
         return result_ok(projected)
     end
 
+    if objective.objective_type == 'TRAVERSAL_LANDING' then
+        local to_cell_id = raw_get(payload, 'to_cell_id')
+            or raw_get(payload, 'target_cell_id')
+        if objective.target_id ~= nil and to_cell_id ~= objective.target_id then
+            return result_ok({ matched = false, reason = 'CELL_MISMATCH' })
+        end
+        local projected = once_complete(objective)
+        projected.matched = true
+        return result_ok(projected)
+    end
+
+    if objective.objective_type == 'WATER_WALK_ENTER' then
+        local water_zone_id = raw_get(payload, 'water_zone_id')
+        if objective.target_id ~= nil and water_zone_id ~= objective.target_id then
+            return result_ok({ matched = false, reason = 'WATER_ZONE_MISMATCH' })
+        end
+        local projected = once_complete(objective)
+        projected.matched = true
+        return result_ok(projected)
+    end
+
+    if objective.objective_type == 'WATER_WALK_EXIT' then
+        local water_zone_id = raw_get(payload, 'water_zone_id')
+        if objective.target_id ~= nil and water_zone_id ~= objective.target_id then
+            return result_ok({ matched = false, reason = 'WATER_ZONE_MISMATCH' })
+        end
+        local projected = once_complete(objective)
+        projected.matched = true
+        return result_ok(projected)
+    end
+
     if objective.objective_type == 'ACQUIRE_ITEM' then
         local item_id = raw_get(payload, 'item_id')
         local amount = raw_get(payload, 'amount') or 0
