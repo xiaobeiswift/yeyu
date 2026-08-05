@@ -1,0 +1,259 @@
+local CharacterLoadout = require 'wzx.domain.equipment.character_loadout'
+local EquipmentInstance = require 'wzx.domain.equipment.equipment_instance'
+local EquipmentSaveCodec = require 'wzx.domain.equipment.equipment_save_codec'
+local Ordered = require 'wzx.domain.common.ordered'
+local Result = require 'wzx.domain.common.result'
+
+local FakeEquipmentStore = {}
+local bytewise_string_less = Ordered.bytewise_string_less
+local error_value = error
+local get_metatable = getmetatable
+local raw_next = next
+local result_err = Result.err
+local result_ok = Result.ok
+local set_metatable = setmetatable
+local table_sort = table.sort
+local type_value = type
+
+local Store = {}
+Store.__index = Store
+Store.__newindex = function()
+    error_value('fake equipment store is read-only', 2)
+end
+Store.__metatable = false
+
+local STATES = set_metatable({}, { __mode = 'k' })
+
+local function invalid(reason, details)
+    details = details or {}
+    details.reason = reason
+    return result_err(
+        'INVALID_ARGUMENT',
+        'error.equipment.fake_store_invalid',
+        false,
+        details
+    )
+end
+
+local function copy_instance(instance)
+    return EquipmentInstance.copy(instance)
+end
+
+local function copy_loadout(loadout)
+    return CharacterLoadout.snapshot(loadout)
+end
+
+local function snapshot_state(state)
+    local instances = {}
+    local instance_id
+    local instance
+    for instance_id, instance in raw_next, state.instances do
+        local copied = copy_instance(instance)
+        if not copied.ok then
+            return copied
+        end
+        instances[#instances + 1] = copied.value
+    end
+    table_sort(instances, function(left, right)
+        return bytewise_string_less(left.instance_id, right.instance_id)
+    end)
+
+    local loadouts = {}
+    local character_id
+    local loadout
+    for character_id, loadout in raw_next, state.loadouts do
+        local copied = copy_loadout(loadout)
+        if not copied.ok then
+            return copied
+        end
+        loadouts[#loadouts + 1] = copied.value
+    end
+    table_sort(loadouts, function(left, right)
+        return bytewise_string_less(left.character_id, right.character_id)
+    end)
+
+    return result_ok({
+        equipment_save_revision = state.equipment_save_revision,
+        instances = instances,
+        loadouts = loadouts,
+        tombstones = {},
+    })
+end
+
+function FakeEquipmentStore.new()
+    local view = set_metatable({}, Store)
+    STATES[view] = {
+        equipment_save_revision = 0,
+        instances = {},
+        loadouts = {},
+    }
+    return result_ok(view)
+end
+
+function Store:get_instance(instance_id)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local instance = state.instances[instance_id]
+    if instance == nil then
+        return result_err(
+            'EQUIPMENT_NOT_FOUND',
+            'error.equipment.not_found',
+            false,
+            { reason = 'INSTANCE_NOT_FOUND', instance_id = instance_id }
+        )
+    end
+    return copy_instance(instance)
+end
+
+function Store:put_instance(instance, options)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local copied = copy_instance(instance)
+    if not copied.ok then
+        return copied
+    end
+    options = options or {}
+    local bump = options.bump_save_revision
+    if bump == nil then
+        bump = true
+    end
+    state.instances[copied.value.instance_id] = copied.value
+    if bump == true then
+        state.equipment_save_revision = state.equipment_save_revision + 1
+    end
+    return result_ok({
+        equipment_save_revision = state.equipment_save_revision,
+        instance_id = copied.value.instance_id,
+    })
+end
+
+function Store:replace_instances_and_loadouts(instances_map, loadouts_map, options)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    if type_value(instances_map) ~= 'table' or get_metatable(instances_map) ~= nil then
+        return invalid('INSTANCES_MAP_REQUIRED', { field = 'instances_map' })
+    end
+    if type_value(loadouts_map) ~= 'table' or get_metatable(loadouts_map) ~= nil then
+        return invalid('LOADOUTS_MAP_REQUIRED', { field = 'loadouts_map' })
+    end
+    options = options or {}
+    local bump = options.bump_save_revision
+    if bump == nil then
+        bump = true
+    end
+
+    local next_instances = {}
+    local instance_id
+    local instance
+    for instance_id, instance in raw_next, instances_map do
+        local copied = copy_instance(instance)
+        if not copied.ok then
+            return copied
+        end
+        next_instances[instance_id] = copied.value
+    end
+
+    local next_loadouts = {}
+    local character_id
+    local loadout
+    for character_id, loadout in raw_next, loadouts_map do
+        local copied = copy_loadout(loadout)
+        if not copied.ok then
+            return copied
+        end
+        next_loadouts[character_id] = copied.value
+    end
+
+    state.instances = next_instances
+    state.loadouts = next_loadouts
+    if bump == true then
+        state.equipment_save_revision = state.equipment_save_revision + 1
+    end
+    return result_ok({
+        equipment_save_revision = state.equipment_save_revision,
+    })
+end
+
+function Store:get_loadout(character_id)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local loadout = state.loadouts[character_id]
+    if loadout == nil then
+        return CharacterLoadout.empty(character_id)
+    end
+    return copy_loadout(loadout)
+end
+
+function Store:get_instances_map()
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local copied = {}
+    local instance_id
+    local instance
+    for instance_id, instance in raw_next, state.instances do
+        local row = copy_instance(instance)
+        if not row.ok then
+            return row
+        end
+        copied[instance_id] = row.value
+    end
+    return result_ok(copied)
+end
+
+function Store:export_save_bundle()
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local snapshot = snapshot_state(state)
+    if not snapshot.ok then
+        return snapshot
+    end
+    return EquipmentSaveCodec.encode(snapshot.value)
+end
+
+function Store:import_save_bundle(bundle)
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    local decoded = EquipmentSaveCodec.decode(bundle)
+    if not decoded.ok then
+        return decoded
+    end
+    local instances = {}
+    local index
+    for index = 1, #decoded.value.instances do
+        local instance = decoded.value.instances[index]
+        instances[instance.instance_id] = instance
+    end
+    local loadouts = {}
+    for index = 1, #decoded.value.loadouts do
+        local loadout = decoded.value.loadouts[index]
+        loadouts[loadout.character_id] = loadout
+    end
+    state.equipment_save_revision = decoded.value.equipment_save_revision
+    state.instances = instances
+    state.loadouts = loadouts
+    return result_ok(true)
+end
+
+function Store:get_save_revision()
+    local state = STATES[self]
+    if state == nil then
+        return invalid('STORE_AUTHORITY_REQUIRED')
+    end
+    return result_ok(state.equipment_save_revision)
+end
+
+return FakeEquipmentStore

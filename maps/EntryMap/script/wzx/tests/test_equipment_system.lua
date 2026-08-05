@@ -1,11 +1,21 @@
 local Harness = require 'wzx.tests.harness'
-local EquipmentCatalog = require 'wzx.config.schema.equipment.catalog'
-local TemperRule = require 'wzx.config.schema.equipment.temper_rule'
-local EquipmentInstance = require 'wzx.domain.equipment.equipment_instance'
 local CharacterLoadout = require 'wzx.domain.equipment.character_loadout'
 local EnhancementPolicy = require 'wzx.domain.equipment.enhancement_policy'
-local StatResolver = require 'wzx.domain.equipment.stat_resolver'
+local EquipmentCatalog = require 'wzx.config.schema.equipment.catalog'
+local EquipmentInstance = require 'wzx.domain.equipment.equipment_instance'
+local EquipmentSaveBridge = require 'wzx.application.use_cases.equipment.equipment_save_bridge'
+local EquipmentSaveCodec = require 'wzx.domain.equipment.equipment_save_codec'
+local EquipmentSectionRegistrar = require 'wzx.config.schema.equipment.section_registrar'
+local EquipmentService = require 'wzx.application.use_cases.equipment.equipment_service'
+local FakeEquipmentStore = require 'wzx.adapters.fake.equipment.fake_equipment_store'
+local HydrateGameRuntime = require 'wzx.application.use_cases.save.hydrate_game_runtime'
+local LoadGameSave = require 'wzx.application.use_cases.save.load_game_save'
+local MemorySaveStore = require 'wzx.adapters.fake.services.memory_save_store'
+local SaveCoordinator = require 'wzx.application.save.save_coordinator'
+local SectionOwnerRegistry = require 'wzx.config.schema.section_owner_registry'
 local StatContribution = require 'wzx.domain.contracts.stat_contribution'
+local StatResolver = require 'wzx.domain.equipment.stat_resolver'
+local TemperRule = require 'wzx.config.schema.equipment.temper_rule'
 
 local case = Harness.case
 local assert = Harness.assert
@@ -498,5 +508,174 @@ return {
         local plan = EnhancementPolicy.plan_enhance(step3.value.instance, catalog)
         assert.equal(plan.ok, false)
         assert.equal(plan.error.code, 'EQUIPMENT_ENHANCE_MAX_LEVEL')
+    end),
+
+    case('equipment save codec round-trips instances loadouts and affixes', function()
+        local catalog = build_catalog()
+        local sword = materialize(catalog, 11, 'eqinst_sword_save', 'equip_iron_sword')
+        sword.owner_character_id = 'char_hero'
+        sword.instance_revision = 2
+        local loadout = CharacterLoadout.empty('char_hero')
+        assert.equal(loadout.ok, true)
+        loadout = loadout.value
+        loadout.weapon_instance_id = 'eqinst_sword_save'
+        loadout.loadout_revision = 1
+
+        local encoded = EquipmentSaveCodec.encode({
+            equipment_save_revision = 4,
+            instances = { sword },
+            loadouts = { loadout },
+            tombstones = {},
+        })
+        assert.equal(encoded.ok, true, encoded.error and encoded.error.details and encoded.error.details.reason)
+        assert.equal(#encoded.value.equipment_instance_rows, 1)
+        assert.equal(#encoded.value.equipment_affix_rows >= 1, true)
+        assert.equal(#encoded.value.character_loadout_rows, 1)
+        assert.equal(#encoded.value.equipment_tombstone_rows, 0)
+
+        local decoded = EquipmentSaveCodec.decode(encoded.value)
+        assert.equal(decoded.ok, true, decoded.error and decoded.error.details and decoded.error.details.reason)
+        assert.equal(decoded.value.equipment_save_revision, 4)
+        assert.equal(decoded.value.instances[1].instance_id, 'eqinst_sword_save')
+        assert.equal(decoded.value.instances[1].owner_character_id, 'char_hero')
+        assert.equal(#decoded.value.instances[1].affixes, #sword.affixes)
+        assert.equal(decoded.value.loadouts[1].weapon_instance_id, 'eqinst_sword_save')
+    end),
+
+    case('section registrar installs slot-4 equipment sections', function()
+        local owners = SectionOwnerRegistry.new()
+        assert.equal(owners.ok, true)
+        local registered = EquipmentSectionRegistrar.register({
+            system_id = '08',
+            section_owners = owners.value,
+        })
+        assert.equal(registered.ok, true)
+        assert.equal(registered.value, 6)
+        local meta = owners.value:get('equipment_metadata')
+        assert.equal(meta.ok, true)
+        assert.equal(meta.value.slot_id, 4)
+        assert.equal(meta.value.owner_system, '08')
+    end),
+
+    case('equipment service checkpoints create and equip then hydrate resumes loadout', function()
+        local catalog = build_catalog()
+        local memory = MemorySaveStore.new()
+        local coordinator = SaveCoordinator.bind({ save_store = memory })
+        assert.equal(coordinator.ok, true)
+        local invoke = SaveCoordinator.fake_invoke(memory)
+        local load = LoadGameSave.bind({ coordinator = coordinator.value })
+        assert.equal(load.ok, true)
+
+        local store = FakeEquipmentStore.new()
+        assert.equal(store.ok, true)
+        local bridge = EquipmentSaveBridge.bind({
+            store = store.value,
+            coordinator = coordinator.value,
+            save_invoke = invoke,
+            default_save_seed = 808001,
+        })
+        assert.equal(bridge.ok, true)
+        local service = EquipmentService.bind({
+            catalog = catalog,
+            store = store.value,
+            save_bridge = bridge.value,
+        })
+        assert.equal(service.ok, true)
+
+        local created = service.value:create_instance({
+            equipment_id = 'equip_iron_sword',
+            origin_type = 'LOOT',
+            origin_ref = 'battle.intro.drop',
+            creation_ordinal = 0,
+            config_version = 1,
+            seed = 55,
+            instance_id = 'eqinst_sword_persist',
+            player_save_scope = 'player_equip_001',
+            request_id = 'request_equip_create',
+            command_id = 'cmd_equip_create',
+        })
+        assert.equal(created.ok, true, created.error and created.error.code)
+        assert.equal(created.value.save.status, 'COMMITTED')
+        assert.equal(created.value.save.created_save, true)
+
+        local equipped = service.value:equip({
+            character_id = 'char_hero',
+            instance_id = 'eqinst_sword_persist',
+            character_context = {
+                character_level = 10,
+                weapon_route = 'SWORD',
+                character_tags = {},
+            },
+            player_save_scope = 'player_equip_001',
+            request_id = 'request_equip_wear',
+            command_id = 'cmd_equip_wear',
+        })
+        assert.equal(equipped.ok, true, equipped.error and equipped.error.code)
+        assert.equal(equipped.value.slot, 'WEAPON')
+        assert.equal(equipped.value.save.status, 'COMMITTED')
+        assert.equal(equipped.value.loadout.weapon_instance_id, 'eqinst_sword_persist')
+
+        local loaded = load.value:load({
+            player_ref = 'player_equip_001',
+            session_instance_id = 'session_equip_1',
+            request_id = 'request_load_equip_1',
+        }, invoke)
+        assert.equal(loaded.ok, true, loaded.error and loaded.error.code)
+        assert.equal(loaded.value.mode, 'READY')
+        assert.equal(
+            #loaded.value.loaded_envelopes[4].payload.equipment_instance_rows,
+            1
+        )
+        assert.equal(
+            loaded.value.loaded_envelopes[4].payload.character_loadout_rows[1].weapon_instance_id,
+            'eqinst_sword_persist'
+        )
+
+        local fresh_store = FakeEquipmentStore.new()
+        assert.equal(fresh_store.ok, true)
+        local hydrate = HydrateGameRuntime.bind({})
+        assert.equal(hydrate.ok, true)
+        local hydrated = hydrate.value:hydrate({
+            load_result = loaded.value,
+            player_save_scope = 'player_equip_001',
+            targets = {
+                equipment_store = fresh_store.value,
+            },
+        })
+        assert.equal(hydrated.ok, true, hydrated.error and hydrated.error.code)
+        local equipment_status
+        local index
+        for index = 1, #hydrated.value.systems do
+            if hydrated.value.systems[index].system_id == 'equipment' then
+                equipment_status = hydrated.value.systems[index].status
+            end
+        end
+        assert.equal(equipment_status, 'HYDRATED')
+
+        local resumed = EquipmentService.bind({
+            catalog = catalog,
+            store = fresh_store.value,
+        })
+        assert.equal(resumed.ok, true)
+        local loadout = resumed.value:get_loadout('char_hero')
+        assert.equal(loadout.ok, true)
+        assert.equal(loadout.value.weapon_instance_id, 'eqinst_sword_persist')
+        assert.equal(loadout.value.loadout_revision >= 1, true)
+
+        local instance = resumed.value:get_instance('eqinst_sword_persist')
+        assert.equal(instance.ok, true)
+        assert.equal(instance.value.owner_character_id, 'char_hero')
+        assert.equal(instance.value.equipment_id, 'equip_iron_sword')
+
+        local unequipped = resumed.value:unequip({
+            character_id = 'char_hero',
+            slot = 'WEAPON',
+        })
+        assert.equal(unequipped.ok, true)
+        assert.equal(unequipped.value.save.status, 'SKIPPED')
+        assert.equal(
+            resumed.value:get_loadout('char_hero').value.weapon_instance_id,
+            nil
+        )
     end),
 }

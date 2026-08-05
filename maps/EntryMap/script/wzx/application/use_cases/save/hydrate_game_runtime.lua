@@ -170,6 +170,15 @@ local PARTY_KEYS = {
     'preset_member_rows',
 }
 
+local EQUIPMENT_KEYS = {
+    'equipment_metadata',
+    'equipment_instance_rows',
+    'equipment_affix_rows',
+    'equipment_locked_affix_rows',
+    'character_loadout_rows',
+    'equipment_tombstone_rows',
+}
+
 local CHARACTER_SLOT5_KEYS = {
     'character_operation_metadata',
     'character_operation_receipts',
@@ -280,6 +289,37 @@ local function hydrate_party(targets, payload3, reports)
     end
     return finish_import(
         'party',
+        store:import_save_bundle(bundle.value),
+        reports
+    )
+end
+
+local function hydrate_equipment(targets, payload4, reports)
+    local bundle, saw = pick_sections(payload4, EQUIPMENT_KEYS)
+    if saw and not bundle.ok then
+        return bundle
+    end
+    if not saw then
+        reports[#reports + 1] = report_entry('equipment', 'SKIPPED', {
+            reason = 'SECTION_ABSENT',
+        })
+        return result_ok(true)
+    end
+    local store = raw_get(targets, 'equipment_store')
+    if store == nil then
+        reports[#reports + 1] = report_entry('equipment', 'SKIPPED', {
+            reason = 'TARGET_ABSENT',
+        })
+        return result_ok(true)
+    end
+    if type_value(store.import_save_bundle) ~= 'function' then
+        return invalid('TARGET_IMPORT_UNSUPPORTED', {
+            system_id = 'equipment',
+            method = 'import_save_bundle',
+        })
+    end
+    return finish_import(
+        'equipment',
         store:import_save_bundle(bundle.value),
         reports
     )
@@ -578,6 +618,10 @@ function Service:hydrate(input)
         return step
     end
     step = hydrate_party(targets, payload3, reports)
+    if not step.ok then
+        return step
+    end
+    step = hydrate_equipment(targets, payload4, reports)
     if not step.ok then
         return step
     end
