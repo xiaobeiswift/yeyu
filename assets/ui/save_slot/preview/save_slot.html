@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>雾州侠行 · 选择角色</title>
+  <link rel="stylesheet" href="save_slot.css" />
+</head>
+<body>
+  <!--
+    设计基准：1920×1080
+    五角色位：有档进入 / 空位新建 / 删档 / 返回
+  -->
+  <div class="stage" id="stage">
+    <div class="bg" aria-hidden="true">
+      <div class="bg__image"></div>
+      <div class="bg__vignette"></div>
+      <div class="bg__mist"></div>
+    </div>
+
+    <header class="header">
+      <div class="header__brand">
+        <div class="header__deco header__deco--left" aria-hidden="true"></div>
+        <h1 class="header__title">选择角色</h1>
+        <div class="header__deco header__deco--right" aria-hidden="true"></div>
+      </div>
+      <p class="header__subtitle" id="hint">点选角色位 · 空位可新建 · 有档可进入</p>
+    </header>
+
+    <main class="slots" id="slots" role="listbox" aria-label="角色位">
+      <!-- 1 有档 · 选中 -->
+      <article class="slot is-selected" role="option" aria-selected="true" data-slot="1" data-empty="false" tabindex="0">
+        <div class="slot__frame">
+          <div class="slot__index">位 一</div>
+          <div class="slot__portrait">
+            <div class="slot__portrait-inner slot__portrait-inner--filled"></div>
+            <div class="slot__portrait-ring"></div>
+          </div>
+          <div class="slot__meta">
+            <h2 class="slot__name">雾津行</h2>
+            <p class="slot__chapter">卷一 · 钟下无名</p>
+            <div class="slot__stats">
+              <span class="slot__stat">2 时 14 分</span>
+              <span class="slot__stat">昨日</span>
+            </div>
+          </div>
+          <div class="slot__selected-mark" aria-hidden="true">已选</div>
+        </div>
+      </article>
+
+      <!-- 2 空 -->
+      <article class="slot is-empty" role="option" aria-selected="false" data-slot="2" data-empty="true" tabindex="0">
+        <div class="slot__frame">
+          <div class="slot__index">位 二</div>
+          <div class="slot__portrait">
+            <div class="slot__portrait-inner slot__portrait-inner--empty"></div>
+          </div>
+          <div class="slot__meta">
+            <h2 class="slot__name slot__name--muted">空 位</h2>
+            <p class="slot__chapter">尚未立档</p>
+            <p class="slot__empty-hint">点「新建」创建角色</p>
+          </div>
+        </div>
+      </article>
+
+      <!-- 3 有档 -->
+      <article class="slot" role="option" aria-selected="false" data-slot="3" data-empty="false" tabindex="0">
+        <div class="slot__frame">
+          <div class="slot__index">位 三</div>
+          <div class="slot__portrait">
+            <div class="slot__portrait-inner slot__portrait-inner--filled slot__portrait-inner--alt"></div>
+          </div>
+          <div class="slot__meta">
+            <h2 class="slot__name">霜刃试锋</h2>
+            <p class="slot__chapter">卷一 · 开局</p>
+            <div class="slot__stats">
+              <span class="slot__stat">38 分</span>
+              <span class="slot__stat">三日前</span>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- 4 空 -->
+      <article class="slot is-empty" role="option" aria-selected="false" data-slot="4" data-empty="true" tabindex="0">
+        <div class="slot__frame">
+          <div class="slot__index">位 四</div>
+          <div class="slot__portrait">
+            <div class="slot__portrait-inner slot__portrait-inner--empty"></div>
+          </div>
+          <div class="slot__meta">
+            <h2 class="slot__name slot__name--muted">空 位</h2>
+            <p class="slot__chapter">尚未立档</p>
+            <p class="slot__empty-hint">点「新建」创建角色</p>
+          </div>
+        </div>
+      </article>
+
+      <!-- 5 空 -->
+      <article class="slot is-empty" role="option" aria-selected="false" data-slot="5" data-empty="true" tabindex="0">
+        <div class="slot__frame">
+          <div class="slot__index">位 五</div>
+          <div class="slot__portrait">
+            <div class="slot__portrait-inner slot__portrait-inner--empty"></div>
+          </div>
+          <div class="slot__meta">
+            <h2 class="slot__name slot__name--muted">空 位</h2>
+            <p class="slot__chapter">尚未立档</p>
+            <p class="slot__empty-hint">点「新建」创建角色</p>
+          </div>
+        </div>
+      </article>
+    </main>
+
+    <footer class="footer">
+      <div class="footer__message" id="message" role="status">已选位 1 · 雾津行</div>
+      <div class="footer__actions">
+        <button type="button" class="btn btn--ghost" id="btn-back">
+          <span class="btn__label">返 回</span>
+        </button>
+        <button type="button" class="btn btn--danger" id="btn-delete">
+          <span class="btn__label">删 除</span>
+        </button>
+        <button type="button" class="btn btn--secondary" id="btn-create">
+          <span class="btn__label">新 建</span>
+        </button>
+        <button type="button" class="btn btn--primary" id="btn-enter">
+          <span class="btn__label">进 入</span>
+        </button>
+      </div>
+    </footer>
+  </div>
+
+  <script src="save_slot.js"></script>
+</body>
+</html>

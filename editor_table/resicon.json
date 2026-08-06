@@ -1,4 +1,84 @@
 {
+    "ui/134218584": {
+        "default_editor_id": 134218584, 
+        "describe": "", 
+        "key": "ui/134218584", 
+        "name": "btn_primary_hover", 
+        "path": "ui/134218584", 
+        "uid": "res_icon_ui/134218584"
+    }, 
+    "ui/134220887": {
+        "default_editor_id": 134220887, 
+        "describe": "", 
+        "key": "ui/134220887", 
+        "name": "btn_ghost_normal_1", 
+        "path": "ui/134220887", 
+        "uid": "res_icon_ui/134220887"
+    }, 
+    "ui/134220982": {
+        "default_editor_id": 134220982, 
+        "describe": "", 
+        "key": "ui/134220982", 
+        "name": "v2_btn_ghost", 
+        "path": "ui/134220982", 
+        "uid": "res_icon_ui/134220982"
+    }, 
+    "ui/134223904": {
+        "default_editor_id": 134223904, 
+        "describe": "", 
+        "key": "ui/134223904", 
+        "name": "panel_slot_selected_1", 
+        "path": "ui/134223904", 
+        "uid": "res_icon_ui/134223904"
+    }, 
+    "ui/134224739": {
+        "default_editor_id": 134224739, 
+        "describe": "", 
+        "key": "ui/134224739", 
+        "name": "panel_slot_1", 
+        "path": "ui/134224739", 
+        "uid": "res_icon_ui/134224739"
+    }, 
+    "ui/134226841": {
+        "default_editor_id": 134226841, 
+        "describe": "", 
+        "key": "ui/134226841", 
+        "name": "panel_slot_selected", 
+        "path": "ui/134226841", 
+        "uid": "res_icon_ui/134226841"
+    }, 
+    "ui/134227373": {
+        "default_editor_id": 134227373, 
+        "describe": "", 
+        "key": "ui/134227373", 
+        "name": "btn_primary_normal_1", 
+        "path": "ui/134227373", 
+        "uid": "res_icon_ui/134227373"
+    }, 
+    "ui/134227534": {
+        "default_editor_id": 134227534, 
+        "describe": "", 
+        "key": "ui/134227534", 
+        "name": "deco_title_line_right_3", 
+        "path": "ui/134227534", 
+        "uid": "res_icon_ui/134227534"
+    }, 
+    "ui/134228414": {
+        "default_editor_id": 134228414, 
+        "describe": "", 
+        "key": "ui/134228414", 
+        "name": "panel_modal", 
+        "path": "ui/134228414", 
+        "uid": "res_icon_ui/134228414"
+    }, 
+    "ui/134229656": {
+        "default_editor_id": 134229656, 
+        "describe": "", 
+        "key": "ui/134229656", 
+        "name": "panel_modal_1", 
+        "path": "ui/134229656", 
+        "uid": "res_icon_ui/134229656"
+    }, 
     "ui/134230791": {
         "default_editor_id": 134230791, 
         "describe": "", 
@@ -6,5 +86,429 @@
         "name": "loading_bg", 
         "path": "ui/134230791", 
         "uid": "res_icon_ui/134230791"
+    }, 
+    "ui/134231186": {
+        "default_editor_id": 134231186, 
+        "describe": "", 
+        "key": "ui/134231186", 
+        "name": "btn_primary_pressed", 
+        "path": "ui/134231186", 
+        "uid": "res_icon_ui/134231186"
+    }, 
+    "ui/134231311": {
+        "default_editor_id": 134231311, 
+        "describe": "", 
+        "key": "ui/134231311", 
+        "name": "icon_backend_cloud", 
+        "path": "ui/134231311", 
+        "uid": "res_icon_ui/134231311"
+    }, 
+    "ui/134231881": {
+        "default_editor_id": 134231881, 
+        "describe": "", 
+        "key": "ui/134231881", 
+        "name": "btn_primary_pressed_2", 
+        "path": "ui/134231881", 
+        "uid": "res_icon_ui/134231881"
+    }, 
+    "ui/134232798": {
+        "default_editor_id": 134232798, 
+        "describe": "", 
+        "key": "ui/134232798", 
+        "name": "portrait_placeholder_1", 
+        "path": "ui/134232798", 
+        "uid": "res_icon_ui/134232798"
+    }, 
+    "ui/134234435": {
+        "default_editor_id": 134234435, 
+        "describe": "", 
+        "key": "ui/134234435", 
+        "name": "v2_btn_primary", 
+        "path": "ui/134234435", 
+        "uid": "res_icon_ui/134234435"
+    }, 
+    "ui/134236853": {
+        "default_editor_id": 134236853, 
+        "describe": "", 
+        "key": "ui/134236853", 
+        "name": "btn_primary_normal_2", 
+        "path": "ui/134236853", 
+        "uid": "res_icon_ui/134236853"
+    }, 
+    "ui/134239083": {
+        "default_editor_id": 134239083, 
+        "describe": "", 
+        "key": "ui/134239083", 
+        "name": "btn_secondary_hover_2", 
+        "path": "ui/134239083", 
+        "uid": "res_icon_ui/134239083"
+    }, 
+    "ui/134239404": {
+        "default_editor_id": 134239404, 
+        "describe": "", 
+        "key": "ui/134239404", 
+        "name": "icon_empty_slot_1", 
+        "path": "ui/134239404", 
+        "uid": "res_icon_ui/134239404"
+    }, 
+    "ui/134241741": {
+        "default_editor_id": 134241741, 
+        "describe": "", 
+        "key": "ui/134241741", 
+        "name": "deco_title_line_left_1", 
+        "path": "ui/134241741", 
+        "uid": "res_icon_ui/134241741"
+    }, 
+    "ui/134242431": {
+        "default_editor_id": 134242431, 
+        "describe": "", 
+        "key": "ui/134242431", 
+        "name": "btn_secondary_normal", 
+        "path": "ui/134242431", 
+        "uid": "res_icon_ui/134242431"
+    }, 
+    "ui/134244552": {
+        "default_editor_id": 134244552, 
+        "describe": "", 
+        "key": "ui/134244552", 
+        "name": "icon_empty_slot", 
+        "path": "ui/134244552", 
+        "uid": "res_icon_ui/134244552"
+    }, 
+    "ui/134244576": {
+        "default_editor_id": 134244576, 
+        "describe": "", 
+        "key": "ui/134244576", 
+        "name": "btn_danger_normal", 
+        "path": "ui/134244576", 
+        "uid": "res_icon_ui/134244576"
+    }, 
+    "ui/134245286": {
+        "default_editor_id": 134245286, 
+        "describe": "", 
+        "key": "ui/134245286", 
+        "name": "btn_danger_hover_1", 
+        "path": "ui/134245286", 
+        "uid": "res_icon_ui/134245286"
+    }, 
+    "ui/134246465": {
+        "default_editor_id": 134246465, 
+        "describe": "", 
+        "key": "ui/134246465", 
+        "name": "btn_secondary_hover", 
+        "path": "ui/134246465", 
+        "uid": "res_icon_ui/134246465"
+    }, 
+    "ui/134248131": {
+        "default_editor_id": 134248131, 
+        "describe": "", 
+        "key": "ui/134248131", 
+        "name": "btn_primary_normal", 
+        "path": "ui/134248131", 
+        "uid": "res_icon_ui/134248131"
+    }, 
+    "ui/134248490": {
+        "default_editor_id": 134248490, 
+        "describe": "", 
+        "key": "ui/134248490", 
+        "name": "panel_slot_selected_2", 
+        "path": "ui/134248490", 
+        "uid": "res_icon_ui/134248490"
+    }, 
+    "ui/134250496": {
+        "default_editor_id": 134250496, 
+        "describe": "", 
+        "key": "ui/134250496", 
+        "name": "icon_cloud_lock", 
+        "path": "ui/134250496", 
+        "uid": "res_icon_ui/134250496"
+    }, 
+    "ui/134251056": {
+        "default_editor_id": 134251056, 
+        "describe": "", 
+        "key": "ui/134251056", 
+        "name": "btn_secondary_normal_2", 
+        "path": "ui/134251056", 
+        "uid": "res_icon_ui/134251056"
+    }, 
+    "ui/134253687": {
+        "default_editor_id": 134253687, 
+        "describe": "", 
+        "key": "ui/134253687", 
+        "name": "portrait_placeholder_2", 
+        "path": "ui/134253687", 
+        "uid": "res_icon_ui/134253687"
+    }, 
+    "ui/134253971": {
+        "default_editor_id": 134253971, 
+        "describe": "", 
+        "key": "ui/134253971", 
+        "name": "deco_title_line_left", 
+        "path": "ui/134253971", 
+        "uid": "res_icon_ui/134253971"
+    }, 
+    "ui/134254184": {
+        "default_editor_id": 134254184, 
+        "describe": "", 
+        "key": "ui/134254184", 
+        "name": "btn_primary_hover_2", 
+        "path": "ui/134254184", 
+        "uid": "res_icon_ui/134254184"
+    }, 
+    "ui/134254990": {
+        "default_editor_id": 134254990, 
+        "describe": "", 
+        "key": "ui/134254990", 
+        "name": "deco_title_line_left_3", 
+        "path": "ui/134254990", 
+        "uid": "res_icon_ui/134254990"
+    }, 
+    "ui/134257827": {
+        "default_editor_id": 134257827, 
+        "describe": "", 
+        "key": "ui/134257827", 
+        "name": "v2_btn_secondary", 
+        "path": "ui/134257827", 
+        "uid": "res_icon_ui/134257827"
+    }, 
+    "ui/134259271": {
+        "default_editor_id": 134259271, 
+        "describe": "", 
+        "key": "ui/134259271", 
+        "name": "v2_icon_empty", 
+        "path": "ui/134259271", 
+        "uid": "res_icon_ui/134259271"
+    }, 
+    "ui/134259647": {
+        "default_editor_id": 134259647, 
+        "describe": "", 
+        "key": "ui/134259647", 
+        "name": "portrait_ring", 
+        "path": "ui/134259647", 
+        "uid": "res_icon_ui/134259647"
+    }, 
+    "ui/134262246": {
+        "default_editor_id": 134262246, 
+        "describe": "", 
+        "key": "ui/134262246", 
+        "name": "panel_slot_2", 
+        "path": "ui/134262246", 
+        "uid": "res_icon_ui/134262246"
+    }, 
+    "ui/134262316": {
+        "default_editor_id": 134262316, 
+        "describe": "", 
+        "key": "ui/134262316", 
+        "name": "btn_danger_normal_2", 
+        "path": "ui/134262316", 
+        "uid": "res_icon_ui/134262316"
+    }, 
+    "ui/134262480": {
+        "default_editor_id": 134262480, 
+        "describe": "", 
+        "key": "ui/134262480", 
+        "name": "portrait_placeholder", 
+        "path": "ui/134262480", 
+        "uid": "res_icon_ui/134262480"
+    }, 
+    "ui/134263686": {
+        "default_editor_id": 134263686, 
+        "describe": "", 
+        "key": "ui/134263686", 
+        "name": "deco_title_line_right_1", 
+        "path": "ui/134263686", 
+        "uid": "res_icon_ui/134263686"
+    }, 
+    "ui/134264298": {
+        "default_editor_id": 134264298, 
+        "describe": "", 
+        "key": "ui/134264298", 
+        "name": "v2_btn_primary_pressed", 
+        "path": "ui/134264298", 
+        "uid": "res_icon_ui/134264298"
+    }, 
+    "ui/134264308": {
+        "default_editor_id": 134264308, 
+        "describe": "", 
+        "key": "ui/134264308", 
+        "name": "btn_ghost_normal_2", 
+        "path": "ui/134264308", 
+        "uid": "res_icon_ui/134264308"
+    }, 
+    "ui/134264627": {
+        "default_editor_id": 134264627, 
+        "describe": "", 
+        "key": "ui/134264627", 
+        "name": "v2_btn_danger", 
+        "path": "ui/134264627", 
+        "uid": "res_icon_ui/134264627"
+    }, 
+    "ui/134264868": {
+        "default_editor_id": 134264868, 
+        "describe": "", 
+        "key": "ui/134264868", 
+        "name": "v2_panel_slot_selected", 
+        "path": "ui/134264868", 
+        "uid": "res_icon_ui/134264868"
+    }, 
+    "ui/134265660": {
+        "default_editor_id": 134265660, 
+        "describe": "", 
+        "key": "ui/134265660", 
+        "name": "btn_secondary_normal_1", 
+        "path": "ui/134265660", 
+        "uid": "res_icon_ui/134265660"
+    }, 
+    "ui/134266657": {
+        "default_editor_id": 134266657, 
+        "describe": "", 
+        "key": "ui/134266657", 
+        "name": "v2_btn_danger_hover", 
+        "path": "ui/134266657", 
+        "uid": "res_icon_ui/134266657"
+    }, 
+    "ui/134266962": {
+        "default_editor_id": 134266962, 
+        "describe": "", 
+        "key": "ui/134266962", 
+        "name": "panel_slot", 
+        "path": "ui/134266962", 
+        "uid": "res_icon_ui/134266962"
+    }, 
+    "ui/134268501": {
+        "default_editor_id": 134268501, 
+        "describe": "", 
+        "key": "ui/134268501", 
+        "name": "btn_primary_pressed_1", 
+        "path": "ui/134268501", 
+        "uid": "res_icon_ui/134268501"
+    }, 
+    "ui/134268749": {
+        "default_editor_id": 134268749, 
+        "describe": "", 
+        "key": "ui/134268749", 
+        "name": "deco_title_line_left_2", 
+        "path": "ui/134268749", 
+        "uid": "res_icon_ui/134268749"
+    }, 
+    "ui/134269431": {
+        "default_editor_id": 134269431, 
+        "describe": "", 
+        "key": "ui/134269431", 
+        "name": "portrait_ring_1", 
+        "path": "ui/134269431", 
+        "uid": "res_icon_ui/134269431"
+    }, 
+    "ui/134269797": {
+        "default_editor_id": 134269797, 
+        "describe": "", 
+        "key": "ui/134269797", 
+        "name": "btn_ghost_normal", 
+        "path": "ui/134269797", 
+        "uid": "res_icon_ui/134269797"
+    }, 
+    "ui/134270167": {
+        "default_editor_id": 134270167, 
+        "describe": "", 
+        "key": "ui/134270167", 
+        "name": "btn_danger_hover_2", 
+        "path": "ui/134270167", 
+        "uid": "res_icon_ui/134270167"
+    }, 
+    "ui/134270479": {
+        "default_editor_id": 134270479, 
+        "describe": "", 
+        "key": "ui/134270479", 
+        "name": "icon_backend_local", 
+        "path": "ui/134270479", 
+        "uid": "res_icon_ui/134270479"
+    }, 
+    "ui/134270566": {
+        "default_editor_id": 134270566, 
+        "describe": "", 
+        "key": "ui/134270566", 
+        "name": "portrait_ring_2", 
+        "path": "ui/134270566", 
+        "uid": "res_icon_ui/134270566"
+    }, 
+    "ui/134272161": {
+        "default_editor_id": 134272161, 
+        "describe": "", 
+        "key": "ui/134272161", 
+        "name": "btn_danger_hover", 
+        "path": "ui/134272161", 
+        "uid": "res_icon_ui/134272161"
+    }, 
+    "ui/134273868": {
+        "default_editor_id": 134273868, 
+        "describe": "", 
+        "key": "ui/134273868", 
+        "name": "icon_empty_slot_2", 
+        "path": "ui/134273868", 
+        "uid": "res_icon_ui/134273868"
+    }, 
+    "ui/134273946": {
+        "default_editor_id": 134273946, 
+        "describe": "", 
+        "key": "ui/134273946", 
+        "name": "v2_btn_secondary_hover", 
+        "path": "ui/134273946", 
+        "uid": "res_icon_ui/134273946"
+    }, 
+    "ui/134275516": {
+        "default_editor_id": 134275516, 
+        "describe": "", 
+        "key": "ui/134275516", 
+        "name": "deco_title_line_right", 
+        "path": "ui/134275516", 
+        "uid": "res_icon_ui/134275516"
+    }, 
+    "ui/134277181": {
+        "default_editor_id": 134277181, 
+        "describe": "", 
+        "key": "ui/134277181", 
+        "name": "v2_btn_primary_hover", 
+        "path": "ui/134277181", 
+        "uid": "res_icon_ui/134277181"
+    }, 
+    "ui/134278658": {
+        "default_editor_id": 134278658, 
+        "describe": "", 
+        "key": "ui/134278658", 
+        "name": "btn_primary_hover_1", 
+        "path": "ui/134278658", 
+        "uid": "res_icon_ui/134278658"
+    }, 
+    "ui/134279658": {
+        "default_editor_id": 134279658, 
+        "describe": "", 
+        "key": "ui/134279658", 
+        "name": "btn_secondary_hover_1", 
+        "path": "ui/134279658", 
+        "uid": "res_icon_ui/134279658"
+    }, 
+    "ui/134280729": {
+        "default_editor_id": 134280729, 
+        "describe": "", 
+        "key": "ui/134280729", 
+        "name": "btn_danger_normal_1", 
+        "path": "ui/134280729", 
+        "uid": "res_icon_ui/134280729"
+    }, 
+    "ui/134282360": {
+        "default_editor_id": 134282360, 
+        "describe": "", 
+        "key": "ui/134282360", 
+        "name": "v2_panel_slot", 
+        "path": "ui/134282360", 
+        "uid": "res_icon_ui/134282360"
+    }, 
+    "ui/134282527": {
+        "default_editor_id": 134282527, 
+        "describe": "", 
+        "key": "ui/134282527", 
+        "name": "deco_title_line_right_2", 
+        "path": "ui/134282527", 
+        "uid": "res_icon_ui/134282527"
     }
 }

@@ -1,0 +1,522 @@
+/* ============================================================
+   雾州侠行 · save_slot 画板
+   基准 1920×1080 · 水墨雾钟 · 金箔点缀
+   资源位：../generated/*.png（生成后替换 CSS 占位）
+   ============================================================ */
+
+:root {
+  /* 色板：从 loading 雾钟静帧提取 */
+  --ink: #0b1214;
+  --ink-soft: #141c1f;
+  --fog: #6a7c7e;
+  --fog-light: #a8b8b6;
+  --moss: #2a3a32;
+  --bronze: #5c6b4a;
+  --patina: #3d6b62;
+  --gold: #c9a45c;
+  --gold-bright: #e8d09a;
+  --gold-dim: #8a7340;
+  --danger: #8b3a3a;
+  --danger-bright: #b85a5a;
+  --paper: rgba(18, 28, 30, 0.78);
+  --paper-border: rgba(201, 164, 92, 0.35);
+  --slot-w: 300px;
+  --slot-h: 520px;
+  --radius: 6px;
+  --font-display: "STKaiti", "KaiTi", "Kaiti SC", "Songti SC", "Noto Serif SC", serif;
+  --font-ui: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: #05080a;
+  color: var(--fog-light);
+  font-family: var(--font-ui);
+  overflow: hidden;
+}
+
+/* ---------- Stage：固定 16:9 画布，居中缩放 ---------- */
+.stage {
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  margin: 0 auto;
+  transform-origin: top center;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* ---------- 背景 ---------- */
+.bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.bg__image {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(8, 14, 16, 0.55) 0%, rgba(8, 14, 16, 0.25) 40%, rgba(5, 10, 12, 0.75) 100%),
+    url("../../loading/loading_bg.jpg") center / cover no-repeat;
+  filter: saturate(0.85) brightness(0.55);
+}
+
+.bg__vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 70% 60% at 50% 45%, transparent 0%, rgba(0, 0, 0, 0.55) 100%);
+}
+
+.bg__mist {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 50% 30% at 20% 80%, rgba(90, 120, 110, 0.12), transparent 70%),
+    radial-gradient(ellipse 40% 25% at 85% 70%, rgba(70, 100, 95, 0.1), transparent 70%);
+  animation: mist-drift 18s ease-in-out infinite alternate;
+}
+
+@keyframes mist-drift {
+  from { opacity: 0.7; transform: translateX(-1%); }
+  to { opacity: 1; transform: translateX(1%); }
+}
+
+/* ---------- 顶栏 ---------- */
+.header {
+  position: relative;
+  z-index: 2;
+  padding: 40px 80px 0;
+  text-align: center;
+}
+
+.header__brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+}
+
+.header__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 56px;
+  font-weight: 500;
+  letter-spacing: 0.28em;
+  color: var(--gold-bright);
+  text-shadow:
+    0 0 24px rgba(201, 164, 92, 0.35),
+    0 2px 8px rgba(0, 0, 0, 0.8);
+}
+
+.header__deco {
+  width: 120px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--gold-dim), var(--gold), var(--gold-dim), transparent);
+  position: relative;
+}
+
+.header__deco::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--gold);
+  transform: translateY(-50%) rotate(45deg);
+  background: rgba(201, 164, 92, 0.25);
+}
+
+.header__deco--left::after { right: -4px; }
+.header__deco--right::after { left: -4px; }
+
+.header__subtitle {
+  margin: 14px 0 0;
+  font-size: 16px;
+  letter-spacing: 0.12em;
+  color: var(--fog);
+}
+
+/* ---------- 五角色位 ---------- */
+.slots {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  gap: 22px;
+  margin-top: 40px;
+  padding: 0 48px;
+  min-height: var(--slot-h);
+}
+
+.slot {
+  width: var(--slot-w);
+  height: var(--slot-h);
+  cursor: pointer;
+  outline: none;
+  transition: transform 0.22s ease;
+}
+
+.slot:hover {
+  transform: translateY(-6px);
+}
+
+.slot:focus-visible .slot__frame {
+  box-shadow:
+    0 0 0 2px var(--gold),
+    0 12px 40px rgba(0, 0, 0, 0.55);
+}
+
+.slot__frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 22px 16px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background:
+    linear-gradient(165deg, rgba(12, 18, 20, 0.55) 0%, rgba(8, 12, 14, 0.65) 100%),
+    url("../generated/panel_slot.png") center / 100% 100% no-repeat;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s, filter 0.2s;
+}
+
+.slot.is-selected .slot__frame {
+  border-color: transparent;
+  background:
+    linear-gradient(165deg, rgba(12, 18, 20, 0.35) 0%, rgba(8, 12, 14, 0.45) 100%),
+    url("../generated/panel_slot_selected.png") center / 100% 100% no-repeat;
+  box-shadow:
+    0 0 0 1px rgba(201, 164, 92, 0.35),
+    0 0 32px rgba(201, 164, 92, 0.18),
+    0 20px 50px rgba(0, 0, 0, 0.55);
+}
+
+.slot.is-empty .slot__frame {
+  filter: saturate(0.7) brightness(0.92);
+  opacity: 0.92;
+}
+
+.slot.is-empty.is-selected .slot__frame {
+  filter: none;
+  opacity: 1;
+}
+
+.slot__index {
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: 0.35em;
+  color: var(--gold-dim);
+  margin-bottom: 20px;
+}
+
+.slot.is-selected .slot__index {
+  color: var(--gold);
+}
+
+/* 头像 / 空位 */
+.slot__portrait {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  margin-bottom: 20px;
+  flex-shrink: 0;
+}
+
+.slot__portrait-inner {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 2px solid rgba(201, 164, 92, 0.4);
+  background: radial-gradient(circle at 40% 35%, #2a3836, #101618 70%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  /* 资源：portrait_placeholder.png / empty 用 icon_empty_slot.png */
+}
+
+.slot__portrait-inner--filled {
+  background:
+    radial-gradient(circle at 40% 30%, rgba(90, 110, 90, 0.4), transparent 55%),
+    linear-gradient(160deg, #3a4a42 0%, #1a2420 50%, #0e1412 100%);
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.5);
+}
+
+.slot__portrait-inner--filled::after {
+  content: "侠";
+  font-family: var(--font-display);
+  font-size: 48px;
+  color: rgba(201, 164, 92, 0.35);
+  letter-spacing: 0.1em;
+}
+
+.slot__portrait-inner--alt::after {
+  content: "刃";
+}
+
+.slot__portrait-inner--empty {
+  border: none;
+  background:
+    url("../generated/icon_empty_slot.png") center / 92% 92% no-repeat;
+}
+
+.slot__plus {
+  display: none;
+}
+
+.slot.is-selected .slot__portrait-inner {
+  border-color: var(--gold);
+  box-shadow: 0 0 24px rgba(201, 164, 92, 0.25);
+}
+
+.slot__portrait-ring {
+  position: absolute;
+  inset: -14px;
+  border-radius: 50%;
+  border: none;
+  background: url("../generated/portrait_ring.png") center / contain no-repeat;
+  animation: ring-pulse 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes ring-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.9; transform: scale(1.03); }
+}
+
+.slot:not(.is-selected) .slot__portrait-ring {
+  display: none;
+}
+
+.slot__meta {
+  text-align: center;
+  width: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.slot__name {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  color: var(--gold-bright);
+}
+
+.slot__name--muted {
+  color: var(--fog);
+  letter-spacing: 0.35em;
+}
+
+.slot__chapter {
+  margin: 0 0 20px;
+  font-size: 15px;
+  letter-spacing: 0.1em;
+  color: var(--fog);
+}
+
+.slot__stats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  color: rgba(168, 184, 182, 0.85);
+  letter-spacing: 0.06em;
+}
+
+.slot__stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+}
+
+.slot__stat-icon {
+  width: 12px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--gold-dim);
+  opacity: 0.7;
+}
+
+.slot__stat-icon--time {
+  clip-path: polygon(15% 0, 85% 0, 100% 50%, 85% 100%, 15% 100%, 0 50%);
+}
+
+.slot__stat-icon--clock {
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+
+.slot__empty-hint {
+  margin-top: 8px;
+  font-size: 13px;
+  color: rgba(168, 184, 182, 0.5);
+  letter-spacing: 0.08em;
+}
+
+.slot__selected-mark {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 16px;
+  font-size: 12px;
+  letter-spacing: 0.3em;
+  color: var(--ink);
+  background: linear-gradient(90deg, var(--gold-dim), var(--gold), var(--gold-dim));
+  border-radius: 2px;
+}
+
+.slot:not(.is-selected) .slot__selected-mark {
+  display: none;
+}
+
+/* ---------- 底栏 ---------- */
+.footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  padding: 0 80px 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.footer__message {
+  min-height: 22px;
+  font-size: 15px;
+  letter-spacing: 0.1em;
+  color: var(--gold);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
+}
+
+.footer__actions {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+}
+
+/* 按钮体系
+   资源位：
+   btn_primary_{normal,hover,pressed}.png
+   btn_secondary_{normal,hover,pressed}.png
+   btn_danger_{normal,hover,pressed}.png
+   btn_ghost_{normal,hover,pressed}.png
+*/
+.btn {
+  position: relative;
+  min-width: 148px;
+  height: 52px;
+  padding: 0 28px;
+  border: 1px solid;
+  border-radius: 3px;
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: 0.28em;
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.15s, background 0.15s, border-color 0.15s, color 0.15s;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+
+.btn:active {
+  transform: translateY(1px) scale(0.98);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn__label {
+  position: relative;
+  z-index: 1;
+}
+
+.btn--primary {
+  color: var(--ink);
+  border-color: transparent;
+  background:
+    center / 100% 100% no-repeat
+    url("../generated/btn_primary_normal.png");
+  box-shadow: 0 4px 16px rgba(201, 164, 92, 0.25);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background-image: url("../generated/btn_primary_hover.png");
+  box-shadow: 0 0 20px rgba(201, 164, 92, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.btn--primary:active:not(:disabled) {
+  background-image: url("../generated/btn_primary_pressed.png");
+}
+
+.btn--secondary {
+  color: var(--gold-bright);
+  border-color: transparent;
+  background:
+    center / 100% 100% no-repeat
+    url("../generated/btn_secondary_normal.png");
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
+}
+
+.btn--secondary:hover:not(:disabled) {
+  background-image: url("../generated/btn_secondary_hover.png");
+  box-shadow: 0 0 16px rgba(201, 164, 92, 0.15);
+}
+
+.btn--danger {
+  color: #f0c8c0;
+  border-color: transparent;
+  background:
+    center / 100% 100% no-repeat
+    url("../generated/btn_danger_normal.png");
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
+}
+
+.btn--danger:hover:not(:disabled) {
+  background-image: url("../generated/btn_danger_hover.png");
+  box-shadow: 0 0 14px rgba(139, 58, 58, 0.25);
+}
+
+.btn--ghost {
+  color: var(--fog-light);
+  border-color: transparent;
+  background:
+    center / 100% 100% no-repeat
+    url("../generated/btn_ghost_normal.png");
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  color: #fff;
+  filter: brightness(1.15);
+}
+
+/* ---------- 舞台缩放适配 ---------- */
+/* transform 由 save_slot.js fitStage 控制 */

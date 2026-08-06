@@ -1,0 +1,54 @@
+{
+  "version": "v2_clean",
+  "note": "Clean UI set: smooth panel, high-contrast buttons, magenta-keyed alpha. Prefer these IDs.",
+  "icons": {
+    "panel_slot": {
+      "icon_id": 134282360
+    },
+    "panel_slot_selected": {
+      "icon_id": 134264868
+    },
+    "btn_primary": {
+      "icon_id": 134234435
+    },
+    "btn_primary_hover": {
+      "icon_id": 134277181
+    },
+    "btn_primary_pressed": {
+      "icon_id": 134264298
+    },
+    "btn_secondary": {
+      "icon_id": 134257827
+    },
+    "btn_secondary_hover": {
+      "icon_id": 134273946
+    },
+    "btn_danger": {
+      "icon_id": 134264627
+    },
+    "btn_danger_hover": {
+      "icon_id": 134266657
+    },
+    "btn_ghost": {
+      "icon_id": 134220982
+    },
+    "icon_empty": {
+      "icon_id": 134259271
+    },
+    "deco_left": {
+      "icon_id": 134254990
+    },
+    "deco_right": {
+      "icon_id": 134227534
+    },
+    "portrait": {
+      "icon_id": 134253687
+    },
+    "portrait_ring": {
+      "icon_id": 134270566
+    },
+    "bg": {
+      "icon_id": 134230791
+    }
+  }
+}

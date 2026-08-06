@@ -1,0 +1,1312 @@
+{
+    "data": {
+        "adapter_option": [
+            false, 
+            false, 
+            false, 
+            false, 
+            0.0, 
+            0.0, 
+            0.0, 
+            0.0
+        ], 
+        "anchor": {
+            "__tuple__": true, 
+            "items": [
+                0.5, 
+                0.5
+            ]
+        }, 
+        "can_drag": false, 
+        "children": [
+            {
+                "adapter_option": [
+                    false, 
+                    false, 
+                    false, 
+                    false, 
+                    0.0, 
+                    0.0, 
+                    0.0, 
+                    0.0
+                ], 
+                "anchor": {
+                    "__tuple__": true, 
+                    "items": [
+                        0.5, 
+                        0.5
+                    ]
+                }, 
+                "can_drag": false, 
+                "cap_insets": {
+                    "__tuple__": true, 
+                    "items": [
+                        48, 
+                        48, 
+                        48, 
+                        48
+                    ]
+                }, 
+                "children": [], 
+                "color": [
+                    255, 
+                    255, 
+                    255, 
+                    255
+                ], 
+                "comp_type": "Image", 
+                "event_list": [], 
+                "hover_child": "", 
+                "image": 134282360, 
+                "is_scale9_enable": false, 
+                "name": "frame", 
+                "opacity": 1.0, 
+                "open_adapter": false, 
+                "pos_data": {
+                    "__tuple__": true, 
+                    "items": [
+                        150.0, 
+                        260.0, 
+                        50.0, 
+                        50.0, 
+                        1, 
+                        1
+                    ]
+                }, 
+                "prefab_sub_key": "c39e01dd-0f9a-445f-8d47-32592eff6d11", 
+                "rotation": 0, 
+                "scale": {
+                    "__tuple__": true, 
+                    "items": [
+                        1, 
+                        1
+                    ]
+                }, 
+                "scene_ui_name": null, 
+                "size": {
+                    "__tuple__": true, 
+                    "items": [
+                        300.0, 
+                        520.0
+                    ]
+                }, 
+                "size_adaptive": false, 
+                "swallow_touches": false, 
+                "type": 4, 
+                "visible": true
+            }, 
+            {
+                "adapter_option": [
+                    false, 
+                    false, 
+                    false, 
+                    false, 
+                    0, 
+                    0, 
+                    0, 
+                    0
+                ], 
+                "alignment": {
+                    "__tuple__": true, 
+                    "items": [
+                        2, 
+                        8
+                    ]
+                }, 
+                "anchor": {
+                    "__tuple__": true, 
+                    "items": [
+                        0.5, 
+                        0.5
+                    ]
+                }, 
+                "bold": false, 
+                "border": false, 
+                "can_drag": false, 
+                "children": [], 
+                "comp_type": "TextLabel", 
+                "event_list": [], 
+                "font": {
+                    "__tuple__": true, 
+                    "items": [
+                        "MSYH", 
+                        16
+                    ]
+                }, 
+                "font_color": [
+                    232, 
+                    208, 
+                    154, 
+                    255
+                ], 
+                "font_min_size": 12, 
+                "gradient": false, 
+                "gradient_bl_color": {
+                    "__tuple__": true, 
+                    "items": [
+                        255, 
+                        255, 
+                        255, 
+                        255
+                    ]
+                }, 
+                "gradient_br_color": {
+                    "__tuple__": true, 
+                    "items": [
+                        255, 
+                        255, 
+                        255, 
+                        255
+                    ]
+                }, 
+                "gradient_tl_color": {
+                    "__tuple__": true, 
+                    "items": [
+                        255, 
+                        255, 
+                        255, 
+                        255
+                    ]
+                }, 
+                "gradient_tr_color": {
+                    "__tuple__": true, 
+                    "items": [
+                        255, 
+                        255, 
+                        255, 
+                        255
+                    ]
+                }, 
+                "hover_child": "", 
+                "italics": false, 
+                "label_effect": {
+                    "__tuple__": true, 
+                    "items": [
+                        false, 
+                        false, 
+                        false, 
+                        true, 
+                        false, 
+                        false
+                    ]
+                }, 
+                "line_space": {
+                    "__tuple__": true, 
+                    "items": [
+                        0, 
+                        0
+                    ]
+                }, 
+                "name": "index", 
+                "opacity": 1.0, 
+                "open_adapter": false, 
+                "over_pattern": false, 
+                "pos_data": {
+                    "__tuple__": true, 
+                    "items": [
+                        150.0, 
+                        478.0001, 
+                        50.0, 
+                        91.9231, 
+                        1, 
+                        1
+                    ]
+                }, 
+                "prefab_sub_key": "a49a11ce-e18d-4021-9f7d-37af25324d09", 
+                "review_word": false, 
+                "rotation": 0, 
+                "scale": {
+                    "__tuple__": true, 
+                    "items": [
+                        1, 
+                        1
+                    ]
+                }, 
+                "scene_ui_name": null, 
+                "shadow": true, 
+                "size": {
+                    "__tuple__": true, 
+                    "items": [
+                        240.0, 
+                        32.0
+                    ]
+                }, 
+                "strike_through": false, 
+                "strike_through_color": {
+                    "__tuple__": true, 
+                    "items": [
+                        0, 
+                        0, 
+                        0, 
+                        255
+                    ]
+                }, 
+                "strike_through_size": 0, 
+                "swallow_touches": false, 
+                "text": {
+                    "__tuple__": true, 
+                    "items": [
+                        "\u4f4d \u4e00", 
+                        false
+                    ]
+                }, 
+                "text_bind": {
+                    "__tuple__": true, 
+                    "items": [
+                        null, 
+                        null
+                    ]
+                }, 
+                "text_border_color": {
+                    "__tuple__": true, 
+                    "items": [
+                        0, 
+                        0, 
+                        0, 
+                        255
+                    ]
+                }, 
+                "text_border_width": 0, 
+                "text_format": "", 
+                "text_italic_radius": 0.5, 
+                "text_shadow_color": {
+                    "__tuple__": true, 
+                    "items": [
+                        0, 
+                        0, 
+                        0, 
+                        180
+                    ]
+                }, 
+                "text_shadow_offset": {
+                    "__tuple__": true, 
+                    "items": [
+                        1, 
+                        -1
+                    ]
+                }, 
+                "type": 3, 
+                "typewriter_effect": 0, 
+                "typewriter_space": 0, 
+                "under_line": false, 
+                "visible": true
+            }, 
+            {
+                "adapter_option": [
+                    false, 
+                    false, 
+                    false, 
+                    false, 
+                    0, 
+                    0, 
+                    0, 
+                    0
+                ], 
+                "anchor": {
+                    "__tuple__": true, 
+                    "items": [
+                        0.5, 
+                        0.5
+                    ]
+                }, 
+                "can_drag": false, 
+                "cap_insets": {
+                    "__tuple__": true, 
+                    "items": [
+                        360, 
+                        360, 
+                        360, 
+                        360
+                    ]
+                }, 
+                "children": [], 
+                "color": [
+                    255, 
+                    255, 
+                    255, 
+                    255
+                ], 
+                "comp_type": "Image", 
+                "event_list": [], 
+                "hover_child": "", 
+                "image": 134253687, 
+                "is_scale9_enable": false, 
+                "name": "portrait", 
+                "opacity": 1.0, 
+                "open_adapter": false, 
+                "pos_data": {
+                    "__tuple__": true, 
+                    "items": [
+                        150.0, 
+                        360.0002, 
+                        50.0, 
+                        69.2308, 
+                        1, 
+                        1
+                    ]
+                }, 
+                "prefab_sub_key": "f46820c2-b58a-4c1c-9d46-dde040cb1c5c", 
+                "rotation": 0, 
+                "scale": {
+                    "__tuple__": true, 
+                    "items": [
+                        1, 
+                        1
+                    ]
+                }, 
+                "scene_ui_name": null, 
+                "size": {
+                    "__tuple__": true, 
+                    "items": [
+                        132.0, 
+                        132.0
+                    ]
+                }, 
+                "size_adaptive": false, 
+                "swallow_touches": false, 
+                "type": 4, 
+                "visible": false
+            }, 
+            {
+                "adapter_option": [
+                    false, 
+                    false, 
+                    false, 
+                    false, 
+                    0, 
+                    0, 
+                    0, 
+                    0
+                ], 
+                "anchor": {
+                    "__tuple__": true, 
+                    "items": [
+                        0.5, 
+                        0.5
+                    ]
+                }, 
+                "can_drag": false, 
+                "cap_insets": {
+                    "__tuple__": true, 
+                    "items": [
+                        360, 
+                        360, 
+                        360, 
+                        360
+                    ]
+                }, 
+                "children": [], 
+                "color": [
+                    255, 
+                    255, 
+                    255, 
+                    255
+                ], 
+                "comp_type": "Image", 
+                "event_list": [], 
+                "hover_child": "", 
+                "image": 134259271, 
+                "is_scale9_enable": false, 
+                "name": "empty_icon", 
+                "opacity": 1.0, 
+                "open_adapter": false, 
+                "pos_data": {
+                    "__tuple__": true, 
+                    "items": [
+                        150.0, 
+                        360.0002, 
+                        50.0, 
+                        69.2308, 
+                        1, 
+                        1
+                    ]
+                }, 
+                "prefab_sub_key": "b0b62249-e0f4-49da-a866-b58e4881e47c", 
+                "rotation": 0, 
+                "scale": {
+                    "__tuple__": true, 
+                    "items": [
+                        1, 
+                        1
+                    ]
+                }, 
+                "scene_ui_name": null, 
+                "size": {
+                    "__tuple__": true, 
+                    "items": [
+                        132.0, 
+                        132.0
+                    ]
+                }, 
+                "size_adaptive": false, 
+                "swallow_touches": false, 
+                "type": 4, 
+                "visible": true
+            }, 
+            {
+                "adapter_option": [
+                    false, 
+                    false, 
+                    false, 
+                    false, 
+                    0, 
+                    0, 
+                    0, 
+                    0
+                ], 
+                "anchor": {
+                    "__tuple__": true, 
+                    "items": [
+                        0.5, 
+                        0.5
+                    ]
+                }, 
+                "can_drag": false, 
+                "cap_insets": {
+                    "__tuple__": true, 
+                    "items": [
+                        360, 
+                        360, 
+                        360, 
+                        360
+                    ]
+                }, 
+                "children": [], 
+                "color": [
+                    255, 
+                    255, 
+                    255, 
+                    255
+                ], 
+                "comp_type": "Image", 
+                "event_list": [], 
+                "hover_child": "", 
+                "image": 134270566, 
+                "is_scale9_enable": false, 
+                "name": "portrait_ring", 
+                "opacity": 1.0, 
+                "open_adapter": false, 
+                "pos_data": {
+                    "__tuple__": true, 
+                    "items": [
+                        150.0, 
+                        360.0002, 
+                        50.0, 
+                        69.2308, 
+                        1, 
+                        1
+                    ]
+                }, 
+                "prefab_sub_key": "f34e2946-3f24-4ca9-b363-4c1e40b1ccf8", 
+                "rotation": 0, 
+                "scale": {
+                    "__tuple__": true, 
+                    "items": [
+                        1, 
+                        1
+                    ]
+                }, 
+                "scene_ui_name": null, 
+                "size": {
+                    "__tuple__": true, 
+                    "items": [
+                        160.0, 
+                        160.0
+                    ]
+                }, 
+                "size_adaptive": false, 
+                "swallow_touches": false, 
+                "type": 4, 
+                "visible": false
+            }, 
+            {
+                "adapter_option": [
+                    false, 
+                    false, 
+                    false, 
+                    false, 
+                    0, 
+                    0, 
+                    0, 
+                    0
+                ], 
+                "anchor": {
+                    "__tuple__": true, 
+                    "items": [
+                        0.5, 
+                        0.5
+                    ]
+                }, 
+                "can_drag": false, 
+                "children": [
+                    {
+                        "adapter_option": [
+                            false, 
+                            false, 
+                            false, 
+                            false, 
+                            20.00011021041871, 
+                            142.2221102104187, 
+                            56.666664600372314, 
+                            56.666664600372314
+                        ], 
+                        "alignment": {
+                            "__tuple__": true, 
+                            "items": [
+                                2, 
+                                8
+                            ]
+                        }, 
+                        "anchor": {
+                            "__tuple__": true, 
+                            "items": [
+                                0.5, 
+                                0.5
+                            ]
+                        }, 
+                        "bold": false, 
+                        "border": false, 
+                        "can_drag": false, 
+                        "children": [], 
+                        "comp_type": "TextLabel", 
+                        "event_list": [], 
+                        "font": {
+                            "__tuple__": true, 
+                            "items": [
+                                "MSYH", 
+                                24
+                            ]
+                        }, 
+                        "font_color": [
+                            240, 
+                            220, 
+                            170, 
+                            255
+                        ], 
+                        "font_min_size": 18, 
+                        "gradient": false, 
+                        "gradient_bl_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                255, 
+                                255, 
+                                255, 
+                                255
+                            ]
+                        }, 
+                        "gradient_br_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                255, 
+                                255, 
+                                255, 
+                                255
+                            ]
+                        }, 
+                        "gradient_tl_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                255, 
+                                255, 
+                                255, 
+                                255
+                            ]
+                        }, 
+                        "gradient_tr_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                255, 
+                                255, 
+                                255, 
+                                255
+                            ]
+                        }, 
+                        "hover_child": "", 
+                        "italics": false, 
+                        "label_effect": {
+                            "__tuple__": true, 
+                            "items": [
+                                false, 
+                                false, 
+                                false, 
+                                true, 
+                                false, 
+                                false
+                            ]
+                        }, 
+                        "line_space": {
+                            "__tuple__": true, 
+                            "items": [
+                                0, 
+                                0
+                            ]
+                        }, 
+                        "name": "name", 
+                        "opacity": 1.0, 
+                        "open_adapter": true, 
+                        "over_pattern": false, 
+                        "pos_data": {
+                            "__tuple__": true, 
+                            "items": [
+                                100.0, 
+                                161.111, 
+                                50.0, 
+                                80.5555, 
+                                1, 
+                                1
+                            ]
+                        }, 
+                        "prefab_sub_key": "adcf2314-78c6-4afc-86ec-3969898d2540", 
+                        "review_word": false, 
+                        "rotation": 0, 
+                        "scale": {
+                            "__tuple__": true, 
+                            "items": [
+                                1, 
+                                1
+                            ]
+                        }, 
+                        "scene_ui_name": null, 
+                        "shadow": true, 
+                        "size": {
+                            "__tuple__": true, 
+                            "items": [
+                                220.0, 
+                                40.0
+                            ]
+                        }, 
+                        "strike_through": false, 
+                        "strike_through_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                0, 
+                                0, 
+                                0, 
+                                255
+                            ]
+                        }, 
+                        "strike_through_size": 0, 
+                        "swallow_touches": false, 
+                        "text": {
+                            "__tuple__": true, 
+                            "items": [
+                                "\u7a7a \u4f4d", 
+                                false
+                            ]
+                        }, 
+                        "text_bind": {
+                            "__tuple__": true, 
+                            "items": [
+                                null, 
+                                null
+                            ]
+                        }, 
+                        "text_border_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                0, 
+                                0, 
+                                0, 
+                                255
+                            ]
+                        }, 
+                        "text_border_width": 0, 
+                        "text_format": "", 
+                        "text_italic_radius": 0.5, 
+                        "text_shadow_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                0, 
+                                0, 
+                                0, 
+                                200
+                            ]
+                        }, 
+                        "text_shadow_offset": {
+                            "__tuple__": true, 
+                            "items": [
+                                1, 
+                                -1
+                            ]
+                        }, 
+                        "type": 3, 
+                        "typewriter_effect": 0, 
+                        "typewriter_space": 0, 
+                        "under_line": false, 
+                        "visible": true
+                    }, 
+                    {
+                        "adapter_option": [
+                            false, 
+                            false, 
+                            false, 
+                            false, 
+                            73.0, 
+                            97.0, 
+                            0.0, 
+                            0.0
+                        ], 
+                        "alignment": {
+                            "__tuple__": true, 
+                            "items": [
+                                2, 
+                                8
+                            ]
+                        }, 
+                        "anchor": {
+                            "__tuple__": true, 
+                            "items": [
+                                0.5, 
+                                0.5
+                            ]
+                        }, 
+                        "bold": false, 
+                        "border": false, 
+                        "can_drag": false, 
+                        "children": [], 
+                        "comp_type": "TextLabel", 
+                        "event_list": [], 
+                        "font": {
+                            "__tuple__": true, 
+                            "items": [
+                                "MSYH", 
+                                15
+                            ]
+                        }, 
+                        "font_color": [
+                            180, 
+                            195, 
+                            190, 
+                            255
+                        ], 
+                        "font_min_size": 12, 
+                        "gradient": false, 
+                        "gradient_bl_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                255, 
+                                255, 
+                                255, 
+                                255
+                            ]
+                        }, 
+                        "gradient_br_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                255, 
+                                255, 
+                                255, 
+                                255
+                            ]
+                        }, 
+                        "gradient_tl_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                255, 
+                                255, 
+                                255, 
+                                255
+                            ]
+                        }, 
+                        "gradient_tr_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                255, 
+                                255, 
+                                255, 
+                                255
+                            ]
+                        }, 
+                        "hover_child": "", 
+                        "italics": false, 
+                        "label_effect": {
+                            "__tuple__": true, 
+                            "items": [
+                                false, 
+                                false, 
+                                false, 
+                                false, 
+                                false, 
+                                false
+                            ]
+                        }, 
+                        "line_space": {
+                            "__tuple__": true, 
+                            "items": [
+                                0, 
+                                0
+                            ]
+                        }, 
+                        "name": "chapter", 
+                        "opacity": 1.0, 
+                        "open_adapter": true, 
+                        "over_pattern": false, 
+                        "pos_data": {
+                            "__tuple__": true, 
+                            "items": [
+                                100.0, 
+                                112.0, 
+                                50.0, 
+                                56.0, 
+                                1, 
+                                1
+                            ]
+                        }, 
+                        "prefab_sub_key": "270eb95c-d05c-444c-92a1-04473912ca89", 
+                        "review_word": false, 
+                        "rotation": 0, 
+                        "scale": {
+                            "__tuple__": true, 
+                            "items": [
+                                1, 
+                                1
+                            ]
+                        }, 
+                        "scene_ui_name": null, 
+                        "shadow": false, 
+                        "size": {
+                            "__tuple__": true, 
+                            "items": [
+                                220.0, 
+                                30.0
+                            ]
+                        }, 
+                        "strike_through": false, 
+                        "strike_through_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                0, 
+                                0, 
+                                0, 
+                                255
+                            ]
+                        }, 
+                        "strike_through_size": 0, 
+                        "swallow_touches": false, 
+                        "text": {
+                            "__tuple__": true, 
+                            "items": [
+                                "\u5c1a\u672a\u7acb\u6863", 
+                                false
+                            ]
+                        }, 
+                        "text_bind": {
+                            "__tuple__": true, 
+                            "items": [
+                                null, 
+                                null
+                            ]
+                        }, 
+                        "text_border_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                0, 
+                                0, 
+                                0, 
+                                255
+                            ]
+                        }, 
+                        "text_border_width": 0, 
+                        "text_format": "", 
+                        "text_italic_radius": 0.5, 
+                        "text_shadow_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                123, 
+                                123, 
+                                123, 
+                                255
+                            ]
+                        }, 
+                        "text_shadow_offset": {
+                            "__tuple__": true, 
+                            "items": [
+                                0, 
+                                0
+                            ]
+                        }, 
+                        "type": 3, 
+                        "typewriter_effect": 0, 
+                        "typewriter_space": 0, 
+                        "under_line": false, 
+                        "visible": true
+                    }, 
+                    {
+                        "adapter_option": [
+                            false, 
+                            false, 
+                            false, 
+                            false, 
+                            103.3334, 
+                            56.6666, 
+                            0.0, 
+                            0.0
+                        ], 
+                        "alignment": {
+                            "__tuple__": true, 
+                            "items": [
+                                2, 
+                                8
+                            ]
+                        }, 
+                        "anchor": {
+                            "__tuple__": true, 
+                            "items": [
+                                0.5, 
+                                0.5
+                            ]
+                        }, 
+                        "bold": false, 
+                        "border": false, 
+                        "can_drag": false, 
+                        "children": [], 
+                        "comp_type": "TextLabel", 
+                        "event_list": [], 
+                        "font": {
+                            "__tuple__": true, 
+                            "items": [
+                                "MSYH", 
+                                14
+                            ]
+                        }, 
+                        "font_color": [
+                            140, 
+                            160, 
+                            155, 
+                            255
+                        ], 
+                        "font_min_size": 12, 
+                        "gradient": false, 
+                        "gradient_bl_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                255, 
+                                255, 
+                                255, 
+                                255
+                            ]
+                        }, 
+                        "gradient_br_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                255, 
+                                255, 
+                                255, 
+                                255
+                            ]
+                        }, 
+                        "gradient_tl_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                255, 
+                                255, 
+                                255, 
+                                255
+                            ]
+                        }, 
+                        "gradient_tr_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                255, 
+                                255, 
+                                255, 
+                                255
+                            ]
+                        }, 
+                        "hover_child": "", 
+                        "italics": false, 
+                        "label_effect": {
+                            "__tuple__": true, 
+                            "items": [
+                                false, 
+                                false, 
+                                false, 
+                                false, 
+                                false, 
+                                false
+                            ]
+                        }, 
+                        "line_space": {
+                            "__tuple__": true, 
+                            "items": [
+                                0, 
+                                0
+                            ]
+                        }, 
+                        "name": "time", 
+                        "opacity": 1.0, 
+                        "open_adapter": true, 
+                        "over_pattern": false, 
+                        "pos_data": {
+                            "__tuple__": true, 
+                            "items": [
+                                100.0, 
+                                76.6666, 
+                                50.0, 
+                                38.3333, 
+                                1, 
+                                1
+                            ]
+                        }, 
+                        "prefab_sub_key": "c407a908-ca61-4673-afc2-fbda20331d1b", 
+                        "review_word": false, 
+                        "rotation": 0, 
+                        "scale": {
+                            "__tuple__": true, 
+                            "items": [
+                                1, 
+                                1
+                            ]
+                        }, 
+                        "scene_ui_name": null, 
+                        "shadow": false, 
+                        "size": {
+                            "__tuple__": true, 
+                            "items": [
+                                220.0, 
+                                36.0
+                            ]
+                        }, 
+                        "strike_through": false, 
+                        "strike_through_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                0, 
+                                0, 
+                                0, 
+                                255
+                            ]
+                        }, 
+                        "strike_through_size": 0, 
+                        "swallow_touches": false, 
+                        "text": {
+                            "__tuple__": true, 
+                            "items": [
+                                "\u70b9\u51fb\u65b0\u5efa\u89d2\u8272", 
+                                false
+                            ]
+                        }, 
+                        "text_bind": {
+                            "__tuple__": true, 
+                            "items": [
+                                null, 
+                                null
+                            ]
+                        }, 
+                        "text_border_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                0, 
+                                0, 
+                                0, 
+                                255
+                            ]
+                        }, 
+                        "text_border_width": 0, 
+                        "text_format": "", 
+                        "text_italic_radius": 0.5, 
+                        "text_shadow_color": {
+                            "__tuple__": true, 
+                            "items": [
+                                123, 
+                                123, 
+                                123, 
+                                255
+                            ]
+                        }, 
+                        "text_shadow_offset": {
+                            "__tuple__": true, 
+                            "items": [
+                                0, 
+                                0
+                            ]
+                        }, 
+                        "type": 3, 
+                        "typewriter_effect": 0, 
+                        "typewriter_space": 0, 
+                        "under_line": false, 
+                        "visible": true
+                    }
+                ], 
+                "clip_enabled": false, 
+                "clipping_type": 1, 
+                "color": {
+                    "__tuple__": true, 
+                    "items": [
+                        255, 
+                        255, 
+                        255, 
+                        0
+                    ]
+                }, 
+                "comp_type": "Layout", 
+                "event_list": [], 
+                "hover_child": "", 
+                "mask_image": 100445, 
+                "name": "tishi", 
+                "opacity": 1.0, 
+                "open_adapter": false, 
+                "pos_data": {
+                    "__tuple__": true, 
+                    "items": [
+                        150.0, 
+                        178.0002, 
+                        50.0, 
+                        34.2308, 
+                        0, 
+                        0
+                    ]
+                }, 
+                "prefab_sub_key": "21c3b07d-12ec-4591-9192-e202fa67c7b0", 
+                "rotation": 0, 
+                "scale": {
+                    "__tuple__": true, 
+                    "items": [
+                        1, 
+                        1
+                    ]
+                }, 
+                "scene_ui_name": null, 
+                "size": {
+                    "__tuple__": true, 
+                    "items": [
+                        200.0, 
+                        200.0
+                    ]
+                }, 
+                "swallow_touches": false, 
+                "type": 7, 
+                "visible": true
+            }, 
+            {
+                "adapter_option": [
+                    false, 
+                    false, 
+                    false, 
+                    false, 
+                    0, 
+                    0, 
+                    0, 
+                    0
+                ], 
+                "anchor": {
+                    "__tuple__": true, 
+                    "items": [
+                        0.5, 
+                        0.5
+                    ]
+                }, 
+                "can_drag": false, 
+                "cap_insets": {
+                    "__tuple__": true, 
+                    "items": [
+                        -1, 
+                        -1, 
+                        0, 
+                        0
+                    ]
+                }, 
+                "children": [], 
+                "color": [
+                    255, 
+                    255, 
+                    255, 
+                    255
+                ], 
+                "comp_type": "Image", 
+                "event_list": [], 
+                "hover_child": "", 
+                "image": 134234435, 
+                "is_scale9_enable": false, 
+                "name": "selected_mark", 
+                "opacity": 0.95, 
+                "open_adapter": false, 
+                "pos_data": {
+                    "__tuple__": true, 
+                    "items": [
+                        150.0, 
+                        41.9999, 
+                        50.0, 
+                        8.0769, 
+                        1, 
+                        1
+                    ]
+                }, 
+                "prefab_sub_key": "4acc482c-7785-48f8-b48a-7499a84c0e8f", 
+                "rotation": 0, 
+                "scale": {
+                    "__tuple__": true, 
+                    "items": [
+                        1, 
+                        1
+                    ]
+                }, 
+                "scene_ui_name": null, 
+                "size": {
+                    "__tuple__": true, 
+                    "items": [
+                        120.0, 
+                        28.0
+                    ]
+                }, 
+                "size_adaptive": false, 
+                "swallow_touches": false, 
+                "type": 4, 
+                "visible": false
+            }
+        ], 
+        "clip_enabled": false, 
+        "clipping_type": 1, 
+        "color": {
+            "__tuple__": true, 
+            "items": [
+                255, 
+                255, 
+                255, 
+                0
+            ]
+        }, 
+        "comp_type": "Layout", 
+        "custom_kv": {}, 
+        "event_list": [], 
+        "hover_child": "", 
+        "mask_image": 100445, 
+        "name": "save_slot_card", 
+        "opacity": 1.0, 
+        "open_adapter": false, 
+        "pos_data": {
+            "__tuple__": true, 
+            "items": [
+                960.0, 
+                540.0, 
+                50.0, 
+                50.0, 
+                1, 
+                1
+            ]
+        }, 
+        "prefab_key": "651de8bd-801a-4a7d-9af9-94fe816d3f3a", 
+        "prefab_sub_key": null, 
+        "rotation": 0, 
+        "scale": {
+            "__tuple__": true, 
+            "items": [
+                1, 
+                1
+            ]
+        }, 
+        "scene_ui_name": null, 
+        "size": {
+            "__tuple__": true, 
+            "items": [
+                300.0, 
+                520.0
+            ]
+        }, 
+        "swallow_touches": false, 
+        "type": 7, 
+        "visible": true
+    }, 
+    "key": "651de8bd-801a-4a7d-9af9-94fe816d3f3a", 
+    "name": "save_slot_card"
+}

@@ -4,10 +4,22 @@
   "key": 2147483647, 
   "group": [
    {
+    "name": "\u65b0\u5efa\u6587\u4ef6\u5939", 
+    "key": "ugj2R5HFEfGGUymy3brqSz", 
+    "group": []
+   }, 
+   {
     "__tuple__": true, 
     "items": [
      "fc936bd4-2fc8-4ee7-b609-3f3563f3bd2e", 
      "panel_1"
+    ]
+   }, 
+   {
+    "__tuple__": true, 
+    "items": [
+     "350b08f1-d845-4f6f-ba6c-0c5fed867509", 
+     "panel_2"
     ]
    }
   ]
