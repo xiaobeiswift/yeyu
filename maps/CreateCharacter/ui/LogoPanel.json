@@ -1,7 +1,7 @@
 {
     "adapt_mode": 2, 
     "anim_data": {}, 
-    "auto_create": true, 
+    "auto_create": false, 
     "children": [
         {
             "adapter_option": [

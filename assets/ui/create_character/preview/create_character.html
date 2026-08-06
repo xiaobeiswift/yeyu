@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>雾州侠行 · 山径立档</title>
+  <link rel="stylesheet" href="create_character.css" />
+</head>
+<body>
+  <!--
+    1920×1080 · 山径散落石碑（非横轨方块、非通栏面板）
+    点碑 → 雾中出影 → 铭文浮于碑侧 → 落款于碑面
+  -->
+  <div class="stage" id="stage">
+    <div class="bg" aria-hidden="true">
+      <div class="bg__sky"></div>
+      <div class="bg__image"></div>
+      <div class="bg__ridge bg__ridge--far"></div>
+      <div class="bg__ridge bg__ridge--near"></div>
+      <div class="bg__path"></div>
+      <div class="bg__mist bg__mist--low"></div>
+      <div class="bg__mist bg__mist--mid"></div>
+      <div class="bg__vignette"></div>
+    </div>
+
+    <!-- ========== 屏 A：角色位 ========== -->
+    <section class="screen is-active" id="screen-slots" aria-label="选择角色">
+      <p class="cliff-title" id="slots-hint">选择角色</p>
+      <div class="slots-field" id="slots-row" role="listbox"></div>
+      <p class="whisper" id="slots-tip">择一空位 · 上山立档</p>
+      <div class="seal-row">
+        <button type="button" class="seal seal--mute" id="btn-slots-back" disabled>返</button>
+        <button type="button" class="seal seal--ash" id="btn-slots-delete" disabled>删</button>
+        <button type="button" class="seal seal--jade" id="btn-slots-create">新</button>
+        <button type="button" class="seal seal--gold" id="btn-slots-enter" disabled>入</button>
+      </div>
+    </section>
+
+    <!-- ========== 屏 B：山径 ========== -->
+    <section class="screen" id="screen-create" aria-label="山径立档">
+      <p class="cliff-title cliff-title--sm">山径立档</p>
+
+      <!-- 雾中人影：无框 -->
+      <div class="wraith" id="stage-hero">
+        <div class="wraith__shade" id="hero-burst" aria-hidden="true"></div>
+        <div class="wraith__body is-idle" id="hero-figure">
+          <span class="wraith__glyph" id="hero-glyph">？</span>
+          <span class="wraith__blade" id="hero-weapon" hidden></span>
+        </div>
+        <p class="wraith__murmur" id="hero-caption">点石 · 影自雾来</p>
+      </div>
+
+      <!-- 沿径散落的石碑（绝对定位，参差不齐） -->
+      <div class="path-stones" id="roster-list" aria-label="石碑名录"></div>
+
+      <!-- 铭文：贴在选中碑旁，随选中而变；非通栏方板 -->
+      <aside class="epigraph" id="epigraph" hidden>
+        <div class="epigraph__moss" aria-hidden="true"></div>
+        <p class="epigraph__role" id="detail-role"></p>
+        <h2 class="epigraph__name" id="detail-name"></h2>
+        <p class="epigraph__text" id="detail-intro"></p>
+        <ul class="epigraph__bones" id="detail-stats"></ul>
+        <div class="epigraph__carve">
+          <input
+            id="name-input"
+            class="epigraph__input"
+            type="text"
+            maxlength="18"
+            placeholder="落名"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <p class="epigraph__hint" id="name-hint"></p>
+        <div class="epigraph__seals">
+          <button type="button" class="seal seal--mute" id="btn-create-cancel">罢</button>
+          <button type="button" class="seal seal--cinnabar" id="btn-create-confirm" disabled>立</button>
+        </div>
+      </aside>
+    </section>
+
+    <div class="toast" id="toast" role="status"></div>
+    <p class="preview-badge">山径散碑 · 非方块面板</p>
+  </div>
+  <script src="create_character.js"></script>
+</body>
+</html>

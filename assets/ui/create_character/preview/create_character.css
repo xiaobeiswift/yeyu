@@ -1,0 +1,1083 @@
+/* ============================================================
+   山径立档 · 散落石碑 / 雾影 / 无通栏方板
+   1920×1080
+   ============================================================ */
+
+:root {
+  --fog: #9aaaa4;
+  --fog-dim: #6a7a74;
+  --gold: #d4b56a;
+  --gold-soft: #e8d09a;
+  --moss: #4a6a52;
+  --cinnabar: #9a3830;
+  --ink: #0a0e0c;
+  --font: "STKaiti", "KaiTi", "Kaiti SC", "FangSong", "STFangsong", "Noto Serif SC", serif;
+  --ui: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: #020405;
+  color: var(--fog);
+  font-family: var(--ui);
+  overflow: hidden;
+}
+
+.stage {
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  margin: 0 auto;
+  transform-origin: top center;
+  overflow: hidden;
+}
+
+/* ---------- 山：层叠剪影 + 雾径，不要 UI 底图框 ---------- */
+.bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.bg__sky {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 120% 80% at 50% 20%, #1a2420 0%, #0a100e 45%, #050808 100%);
+}
+
+.bg__image {
+  position: absolute;
+  inset: 0;
+  background: url("../../loading/loading_bg.jpg") center 25% / cover no-repeat;
+  opacity: 0.42;
+  filter: saturate(0.55) brightness(0.55) contrast(1.1);
+  mask-image: linear-gradient(180deg, #000 0%, #000 40%, transparent 85%);
+}
+
+.bg__ridge {
+  position: absolute;
+  left: -10%;
+  right: -10%;
+  height: 45%;
+  opacity: 0.55;
+}
+
+.bg__ridge--far {
+  top: 18%;
+  background: radial-gradient(ellipse 70% 100% at 20% 100%, #1e2a26 0%, transparent 55%),
+    radial-gradient(ellipse 60% 90% at 75% 100%, #182420 0%, transparent 50%),
+    radial-gradient(ellipse 50% 80% at 50% 100%, #222e2a 0%, transparent 45%);
+  filter: blur(1px);
+}
+
+.bg__ridge--near {
+  top: 32%;
+  height: 50%;
+  background: radial-gradient(ellipse 55% 100% at 5% 100%, #0e1614 0%, transparent 50%),
+    radial-gradient(ellipse 50% 100% at 95% 100%, #0c1412 0%, transparent 48%),
+    radial-gradient(ellipse 40% 70% at 40% 100%, #121c18 0%, transparent 50%);
+  opacity: 0.75;
+}
+
+/* 蜿蜒山径：梯形 + 弯曲感 */
+.bg__path {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 160%;
+  height: 62%;
+  transform: translateX(-50%);
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(40, 38, 30, 0.12) 25%,
+    rgba(28, 26, 20, 0.35) 55%,
+    rgba(18, 16, 12, 0.55) 100%
+  );
+  clip-path: polygon(46% 0%, 54% 0%, 92% 100%, 8% 100%);
+}
+
+.bg__path::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    95deg,
+    transparent 40%,
+    rgba(212, 181, 106, 0.03) 48%,
+    transparent 56%
+  );
+}
+
+.bg__mist {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+
+.bg__mist--mid {
+  top: 28%;
+  height: 40%;
+  background: radial-gradient(ellipse 80% 50% at 50% 50%, rgba(140, 160, 150, 0.16), transparent 70%);
+  animation: mist 18s ease-in-out infinite alternate;
+}
+
+.bg__mist--low {
+  bottom: 0;
+  height: 45%;
+  background: radial-gradient(ellipse 90% 60% at 50% 80%, rgba(100, 120, 110, 0.2), transparent 65%);
+  animation: mist 22s ease-in-out infinite alternate-reverse;
+}
+
+.bg__vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 85% 75% at 50% 40%, transparent 30%, rgba(0, 0, 0, 0.55) 100%);
+}
+
+@keyframes mist {
+  from {
+    opacity: 0.55;
+    transform: translateX(-2%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(2%);
+  }
+}
+
+/* ---------- 屏 ---------- */
+.screen {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.45s ease;
+}
+
+.screen.is-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 崖壁题字：无底框 */
+.cliff-title {
+  position: absolute;
+  top: 36px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  text-align: center;
+  font-family: var(--font);
+  font-size: 48px;
+  font-weight: 500;
+  letter-spacing: 0.65em;
+  text-indent: 0.65em;
+  color: var(--gold-soft);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.7), 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 3;
+  pointer-events: none;
+}
+
+.cliff-title--sm {
+  font-size: 36px;
+  top: 28px;
+  letter-spacing: 0.8em;
+  text-indent: 0.8em;
+  opacity: 0.9;
+}
+
+.whisper {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100px;
+  margin: 0;
+  text-align: center;
+  font-family: var(--font);
+  font-size: 16px;
+  letter-spacing: 0.4em;
+  text-indent: 0.4em;
+  color: var(--fog-dim);
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* ---------- 角色位：不规则碑，参差站在径上 ---------- */
+.slots-field {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 140px;
+  height: 720px;
+  z-index: 2;
+}
+
+.slot-card {
+  position: absolute;
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  filter: drop-shadow(0 18px 22px rgba(0, 0, 0, 0.55));
+  transition: transform 0.3s ease, filter 0.3s;
+  z-index: 1;
+}
+
+.slot-card:hover {
+  filter: drop-shadow(0 22px 28px rgba(0, 0, 0, 0.6)) brightness(1.08);
+  z-index: 2;
+}
+
+.slot-card.is-selected {
+  z-index: 3;
+  filter: drop-shadow(0 20px 30px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(212, 181, 106, 0.15));
+}
+
+.slot-card__rock {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(155deg, #5a645c 0%, #3a443c 35%, #2a322c 70%, #1a201c 100%);
+  /* 每块用不同 clip，JS 会加 modifier class */
+  position: relative;
+}
+
+.slot-card__rock::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 80% 40% at 30% 20%, rgba(255, 255, 255, 0.06), transparent 50%),
+    radial-gradient(ellipse 40% 30% at 70% 80%, rgba(0, 0, 0, 0.25), transparent);
+  pointer-events: none;
+}
+
+.slot-card__rock::after {
+  content: "";
+  position: absolute;
+  inset: 12% 14% 10%;
+  border: 1px solid rgba(212, 181, 106, 0.12);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.slot-card.is-selected .slot-card__rock {
+  background: linear-gradient(155deg, #6a7468 0%, #4a544c 40%, #323a34 75%, #222820 100%);
+}
+
+.slot-card.is-selected .slot-card__rock::after {
+  border-color: rgba(212, 181, 106, 0.35);
+}
+
+/* 五种不规则碑形 */
+.slot-card--a {
+  width: 200px;
+  height: 380px;
+}
+.slot-card--a .slot-card__rock {
+  clip-path: polygon(12% 8%, 48% 0%, 88% 10%, 96% 22%, 92% 100%, 8% 96%, 4% 20%);
+}
+
+.slot-card--b {
+  width: 180px;
+  height: 400px;
+}
+.slot-card--b .slot-card__rock {
+  clip-path: polygon(18% 4%, 55% 0%, 90% 12%, 98% 30%, 90% 100%, 6% 94%, 2% 28%, 10% 12%);
+}
+
+.slot-card--c {
+  width: 210px;
+  height: 360px;
+}
+.slot-card--c .slot-card__rock {
+  clip-path: polygon(8% 12%, 40% 2%, 78% 0%, 95% 18%, 100% 100%, 0% 98%, 5% 30%);
+}
+
+.slot-card--d {
+  width: 190px;
+  height: 390px;
+}
+.slot-card--d .slot-card__rock {
+  clip-path: polygon(15% 0%, 70% 4%, 92% 16%, 88% 100%, 10% 96%, 0% 40%, 6% 14%);
+}
+
+.slot-card--e {
+  width: 200px;
+  height: 370px;
+}
+.slot-card--e .slot-card__rock {
+  clip-path: polygon(20% 6%, 60% 0%, 85% 8%, 100% 25%, 94% 100%, 5% 95%, 0% 22%);
+}
+
+/* 沿径站位（透视：中间靠后略小，两侧靠前） */
+.slot-card[data-slot="1"] {
+  left: 8%;
+  top: 28%;
+  transform: rotate(-6deg);
+}
+.slot-card[data-slot="2"] {
+  left: 24%;
+  top: 18%;
+  transform: rotate(-2deg) scale(0.95);
+}
+.slot-card[data-slot="3"] {
+  left: 42%;
+  top: 12%;
+  transform: scale(0.9);
+}
+.slot-card[data-slot="4"] {
+  left: 58%;
+  top: 16%;
+  transform: rotate(3deg) scale(0.95);
+}
+.slot-card[data-slot="5"] {
+  left: 74%;
+  top: 26%;
+  transform: rotate(7deg);
+}
+
+.slot-card.is-selected[data-slot="1"] {
+  transform: rotate(-4deg) translateY(-12px);
+}
+.slot-card.is-selected[data-slot="2"] {
+  transform: rotate(-1deg) scale(0.98) translateY(-12px);
+}
+.slot-card.is-selected[data-slot="3"] {
+  transform: scale(0.95) translateY(-14px);
+}
+.slot-card.is-selected[data-slot="4"] {
+  transform: rotate(2deg) scale(0.98) translateY(-12px);
+}
+.slot-card.is-selected[data-slot="5"] {
+  transform: rotate(5deg) translateY(-12px);
+}
+
+.slot-card__index {
+  position: absolute;
+  top: 14%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: var(--font);
+  font-size: 15px;
+  letter-spacing: 0.35em;
+  text-indent: 0.35em;
+  color: var(--gold-soft);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.slot-card__glyph {
+  position: absolute;
+  top: 32%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: var(--font);
+  font-size: 48px;
+  color: rgba(232, 208, 154, 0.35);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.slot-card__glyph.is-filled {
+  color: var(--gold-soft);
+  text-shadow: 0 0 20px rgba(212, 181, 106, 0.2);
+}
+
+.slot-card__name {
+  position: absolute;
+  top: 58%;
+  left: 12%;
+  right: 12%;
+  text-align: center;
+  font-family: var(--font);
+  font-size: 22px;
+  letter-spacing: 0.2em;
+  color: var(--gold-soft);
+  z-index: 2;
+  pointer-events: none;
+  line-height: 1.3;
+}
+
+.slot-card.is-empty .slot-card__name {
+  color: var(--fog-dim);
+  letter-spacing: 0.4em;
+  text-indent: 0.2em;
+}
+
+.slot-card__meta {
+  position: absolute;
+  top: 72%;
+  left: 14%;
+  right: 14%;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--fog-dim);
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* ---------- 印章按钮：圆印，不是方按钮 ---------- */
+.seal-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 36px;
+  display: flex;
+  justify-content: center;
+  gap: 28px;
+  z-index: 4;
+}
+
+.seal {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 2px solid rgba(212, 181, 106, 0.45);
+  background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.08), transparent 45%),
+    radial-gradient(circle at 50% 50%, #3a423c, #1a201c);
+  color: var(--gold-soft);
+  font-family: var(--font);
+  font-size: 22px;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  transition: transform 0.15s, filter 0.15s, opacity 0.15s;
+  padding: 0;
+}
+
+.seal:hover:not(:disabled) {
+  transform: scale(1.08);
+  filter: brightness(1.15);
+}
+
+.seal:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.seal--gold {
+  border-color: rgba(232, 208, 154, 0.65);
+  background: radial-gradient(circle at 35% 30%, rgba(255, 230, 160, 0.15), transparent 50%),
+    radial-gradient(circle at 50% 50%, #5a4a28, #2a2210);
+}
+
+.seal--jade {
+  border-color: rgba(100, 140, 110, 0.55);
+  background: radial-gradient(circle at 35% 30%, rgba(160, 200, 170, 0.12), transparent 50%),
+    radial-gradient(circle at 50% 50%, #3a4a3c, #1a241c);
+}
+
+.seal--ash {
+  border-color: rgba(160, 100, 100, 0.45);
+  color: #e0b8b8;
+  background: radial-gradient(circle at 50% 50%, #4a3030, #201414);
+}
+
+.seal--mute {
+  border-color: rgba(140, 150, 145, 0.35);
+  color: var(--fog);
+}
+
+.seal--cinnabar {
+  width: 64px;
+  height: 64px;
+  border-color: rgba(180, 60, 50, 0.7);
+  color: #f0d0c8;
+  font-size: 26px;
+  background: radial-gradient(circle at 35% 30%, rgba(220, 100, 80, 0.25), transparent 50%),
+    radial-gradient(circle at 50% 50%, #7a3028, #3a1410);
+  box-shadow: 0 0 0 3px rgba(100, 30, 24, 0.35), 0 8px 20px rgba(0, 0, 0, 0.45);
+}
+
+/* ========== 雾中人影：无线框 ========== */
+.wraith {
+  position: absolute;
+  left: 50%;
+  top: 90px;
+  width: 280px;
+  height: 360px;
+  margin-left: -140px;
+  z-index: 2;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.wraith__body {
+  position: relative;
+  width: 140px;
+  height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform-origin: 50% 100%;
+}
+
+/* 人影用渐变剪影，不要圆角矩形卡片 */
+.wraith__body::before {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 120px;
+  height: 240px;
+  margin-left: -60px;
+  background: linear-gradient(180deg, rgba(232, 208, 154, 0.15) 0%, transparent 25%),
+    linear-gradient(180deg, rgba(50, 60, 56, 0.85) 0%, rgba(12, 16, 14, 0.95) 100%);
+  clip-path: polygon(
+    35% 0%,
+    65% 0%,
+    78% 12%,
+    82% 28%,
+    70% 35%,
+    75% 55%,
+    90% 100%,
+    10% 100%,
+    25% 55%,
+    30% 35%,
+    18% 28%,
+    22% 12%
+  );
+  filter: drop-shadow(0 20px 30px rgba(0, 0, 0, 0.5));
+  opacity: 0.92;
+}
+
+.wraith__glyph {
+  position: relative;
+  z-index: 2;
+  margin-top: 48px;
+  font-family: var(--font);
+  font-size: 56px;
+  color: var(--gold-soft);
+  text-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), 0 0 30px rgba(212, 181, 106, 0.15);
+}
+
+.wraith__blade {
+  position: relative;
+  z-index: 2;
+  margin-top: 20px;
+  width: 3px;
+  height: 90px;
+  background: linear-gradient(180deg, var(--gold-soft), transparent);
+  opacity: 0.7;
+}
+
+.wraith__murmur {
+  margin: 16px 0 0;
+  font-family: var(--font);
+  font-size: 14px;
+  letter-spacing: 0.35em;
+  text-indent: 0.35em;
+  color: var(--fog-dim);
+  text-align: center;
+}
+
+.wraith__shade {
+  position: absolute;
+  left: 50%;
+  bottom: 40px;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  transform: translateX(-50%);
+}
+
+.wraith__shade.is-on {
+  animation: shade-burst 0.8s ease-out both;
+}
+
+.wraith__body.is-enter {
+  animation: wraith-in 0.9s cubic-bezier(0.2, 0.85, 0.2, 1) both;
+}
+
+.wraith__body.is-idle {
+  animation: wraith-breathe 3.5s ease-in-out infinite;
+}
+
+@keyframes wraith-in {
+  0% {
+    opacity: 0;
+    transform: translateY(80px) scale(0.75);
+    filter: blur(8px);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-12px) scale(1.03);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes wraith-breathe {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes shade-burst {
+  0% {
+    width: 20px;
+    height: 10px;
+    opacity: 0.5;
+    box-shadow: 0 0 0 0 rgba(212, 181, 106, 0.35);
+  }
+  100% {
+    width: 220px;
+    height: 50px;
+    opacity: 0;
+    box-shadow: 0 0 40px 10px rgba(212, 181, 106, 0);
+  }
+}
+
+/* ========== 径上散落石碑：绝对定位 + 参差旋转 ========== */
+.path-stones {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.path-stones .stone {
+  pointer-events: auto;
+}
+
+.stone {
+  position: absolute;
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  filter: drop-shadow(0 14px 18px rgba(0, 0, 0, 0.5));
+  transition: transform 0.28s ease, filter 0.28s;
+  z-index: 1;
+}
+
+.stone:hover {
+  z-index: 4;
+  filter: drop-shadow(0 18px 22px rgba(0, 0, 0, 0.55)) brightness(1.1);
+}
+
+.stone.is-selected {
+  z-index: 5;
+  filter: drop-shadow(0 16px 24px rgba(0, 0, 0, 0.5)) drop-shadow(0 0 16px rgba(212, 181, 106, 0.2));
+}
+
+.stone__face {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(160deg, #5c665e 0%, #3e4840 40%, #2a322c 100%);
+  position: relative;
+}
+
+.stone__face::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 60% 40% at 30% 25%, rgba(255, 255, 255, 0.07), transparent),
+    radial-gradient(ellipse 50% 40% at 70% 70%, rgba(0, 0, 0, 0.2), transparent);
+  pointer-events: none;
+}
+
+.stone.is-selected .stone__face {
+  background: linear-gradient(160deg, #6a7468 0%, #4a564c 45%, #323c34 100%);
+}
+
+.stone__glyph {
+  position: absolute;
+  top: 22%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: var(--font);
+  font-size: 28px;
+  color: var(--gold-soft);
+  z-index: 2;
+  pointer-events: none;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.stone__label {
+  position: absolute;
+  bottom: 18%;
+  left: 10%;
+  right: 10%;
+  text-align: center;
+  font-family: var(--font);
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: #c8d0c4;
+  z-index: 2;
+  pointer-events: none;
+  line-height: 1.25;
+}
+
+/* 8 块碑沿径散落：位置/旋转/大小各异，可继续加 */
+.stone--0 {
+  left: 6%;
+  top: 58%;
+  width: 100px;
+  height: 150px;
+  transform: rotate(-11deg);
+}
+.stone--0 .stone__face {
+  clip-path: polygon(14% 10%, 52% 0%, 90% 12%, 98% 28%, 88% 100%, 8% 94%, 2% 30%);
+}
+
+.stone--1 {
+  left: 16%;
+  top: 48%;
+  width: 92px;
+  height: 168px;
+  transform: rotate(-5deg);
+}
+.stone--1 .stone__face {
+  clip-path: polygon(10% 6%, 60% 0%, 88% 14%, 95% 100%, 5% 96%, 0% 40%);
+}
+
+.stone--2 {
+  left: 26%;
+  top: 62%;
+  width: 110px;
+  height: 140px;
+  transform: rotate(4deg);
+}
+.stone--2 .stone__face {
+  clip-path: polygon(8% 14%, 45% 0%, 82% 8%, 100% 30%, 92% 100%, 0% 92%);
+}
+
+.stone--3 {
+  left: 38%;
+  top: 52%;
+  width: 96px;
+  height: 160px;
+  transform: rotate(-2deg);
+}
+.stone--3 .stone__face {
+  clip-path: polygon(18% 0%, 75% 4%, 95% 20%, 90% 100%, 8% 96%, 2% 22%);
+}
+
+.stone--4 {
+  left: 50%;
+  top: 64%;
+  width: 104px;
+  height: 148px;
+  transform: rotate(6deg);
+}
+.stone--4 .stone__face {
+  clip-path: polygon(12% 8%, 55% 0%, 92% 10%, 100% 100%, 4% 94%, 0% 35%);
+}
+
+.stone--5 {
+  left: 62%;
+  top: 50%;
+  width: 90px;
+  height: 170px;
+  transform: rotate(-8deg);
+}
+.stone--5 .stone__face {
+  clip-path: polygon(20% 4%, 70% 0%, 95% 18%, 88% 100%, 10% 98%, 5% 25%);
+}
+
+.stone--6 {
+  left: 74%;
+  top: 58%;
+  width: 108px;
+  height: 145px;
+  transform: rotate(9deg);
+}
+.stone--6 .stone__face {
+  clip-path: polygon(5% 12%, 40% 0%, 85% 6%, 98% 25%, 94% 100%, 6% 90%);
+}
+
+.stone--7 {
+  left: 85%;
+  top: 46%;
+  width: 94px;
+  height: 165px;
+  transform: rotate(3deg);
+}
+.stone--7 .stone__face {
+  clip-path: polygon(15% 0%, 65% 2%, 90% 15%, 100% 100%, 0% 95%, 8% 20%);
+}
+
+.stone.is-selected.stone--0 {
+  transform: rotate(-8deg) translateY(-18px) scale(1.08);
+}
+.stone.is-selected.stone--1 {
+  transform: rotate(-3deg) translateY(-18px) scale(1.08);
+}
+.stone.is-selected.stone--2 {
+  transform: rotate(2deg) translateY(-18px) scale(1.08);
+}
+.stone.is-selected.stone--3 {
+  transform: rotate(0deg) translateY(-18px) scale(1.08);
+}
+.stone.is-selected.stone--4 {
+  transform: rotate(4deg) translateY(-18px) scale(1.08);
+}
+.stone.is-selected.stone--5 {
+  transform: rotate(-6deg) translateY(-18px) scale(1.08);
+}
+.stone.is-selected.stone--6 {
+  transform: rotate(7deg) translateY(-18px) scale(1.08);
+}
+.stone.is-selected.stone--7 {
+  transform: rotate(1deg) translateY(-18px) scale(1.08);
+}
+
+/* ========== 铭文：斜倚碎碑状，非通栏方板 ========== */
+.epigraph {
+  position: absolute;
+  right: 4%;
+  top: 22%;
+  width: 320px;
+  z-index: 6;
+  padding: 36px 40px 28px 48px;
+  /* 不规则石片外形 */
+  clip-path: polygon(
+    6% 4%,
+    88% 0%,
+    100% 12%,
+    96% 88%,
+    78% 100%,
+    4% 94%,
+    0% 70%,
+    8% 30%
+  );
+  background: linear-gradient(145deg, #4a544c 0%, #323a34 40%, #242c26 100%);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+  transform: rotate(-2.5deg);
+  animation: epigraph-in 0.4s ease both;
+}
+
+.epigraph[hidden] {
+  display: none;
+}
+
+@keyframes epigraph-in {
+  from {
+    opacity: 0;
+    transform: rotate(-2.5deg) translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(-2.5deg) translateY(0);
+  }
+}
+
+.epigraph__moss {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: radial-gradient(ellipse 40% 25% at 20% 15%, rgba(74, 106, 82, 0.25), transparent),
+    radial-gradient(ellipse 30% 20% at 80% 85%, rgba(0, 0, 0, 0.2), transparent);
+  pointer-events: none;
+}
+
+.epigraph__role {
+  position: relative;
+  margin: 0 0 6px;
+  font-family: var(--font);
+  font-size: 13px;
+  letter-spacing: 0.35em;
+  color: var(--fog-dim);
+}
+
+.epigraph__name {
+  position: relative;
+  margin: 0 0 12px;
+  font-family: var(--font);
+  font-size: 30px;
+  letter-spacing: 0.25em;
+  text-indent: 0.15em;
+  color: var(--gold-soft);
+  font-weight: 500;
+}
+
+.epigraph__text {
+  position: relative;
+  margin: 0 0 14px;
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.75;
+  letter-spacing: 0.06em;
+  color: #c0c8c0;
+  max-height: 6.2em;
+  overflow: hidden;
+}
+
+.epigraph__bones {
+  position: relative;
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+}
+
+.bone {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font);
+  font-size: 13px;
+  color: #b8c0b8;
+}
+
+.bone__label {
+  letter-spacing: 0.15em;
+  min-width: 2.2em;
+}
+
+.bone__dots {
+  display: flex;
+  gap: 3px;
+  flex: 1;
+}
+
+.bone__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid rgba(212, 181, 106, 0.25);
+}
+
+.bone__dot.is-on {
+  background: #7a3a28;
+  border-color: #5a2818;
+}
+
+.bone__value {
+  color: var(--gold);
+  font-size: 12px;
+  min-width: 1.2em;
+}
+
+.epigraph__carve {
+  position: relative;
+  margin: 0 0 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(212, 181, 106, 0.35);
+}
+
+.epigraph__input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-family: var(--font);
+  font-size: 24px;
+  letter-spacing: 0.3em;
+  color: var(--gold-soft);
+  padding: 4px 0;
+}
+
+.epigraph__input::placeholder {
+  color: rgba(150, 160, 155, 0.4);
+  letter-spacing: 0.2em;
+  font-size: 16px;
+}
+
+.epigraph__hint {
+  position: relative;
+  margin: 0 0 12px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--fog-dim);
+  min-height: 1.2em;
+}
+
+.epigraph__hint.is-error {
+  color: #c07070;
+}
+
+.epigraph__hint.is-ok {
+  color: #6a9a78;
+}
+
+.epigraph__seals {
+  position: relative;
+  display: flex;
+  gap: 16px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.epigraph__seals .seal {
+  width: 48px;
+  height: 48px;
+  font-size: 18px;
+}
+
+/* toast */
+.toast {
+  position: absolute;
+  left: 50%;
+  top: 12%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 10px 24px;
+  font-family: var(--font);
+  font-size: 16px;
+  letter-spacing: 0.2em;
+  color: var(--gold-soft);
+  background: rgba(8, 12, 10, 0.85);
+  border: 1px solid rgba(212, 181, 106, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s;
+}
+
+.toast.is-show {
+  opacity: 1;
+}
+
+.preview-badge {
+  position: absolute;
+  right: 14px;
+  bottom: 8px;
+  z-index: 30;
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: rgba(140, 150, 145, 0.4);
+  pointer-events: none;
+}
