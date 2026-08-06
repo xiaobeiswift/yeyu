@@ -443,9 +443,27 @@ local function bind_events()
     end)
 
     Kit.on_click(btn.create, function()
-        act(function()
-            return flow:create_slot()
-        end)
+        -- Empty slot → switch to CreateCharacter map (立档台).
+        local LevelSwitch = require 'wzx.presentation.y3.level_switch'
+        local view = flow:get_view()
+        if not view.ok then
+            present(view)
+            return
+        end
+        local slot_index = view.value.selected_slot_index or 1
+        local slots = view.value.slots or {}
+        local selected = slots[slot_index]
+        if selected and selected.empty == false then
+            present(flow:select_slot(slot_index))
+            set_text(message_label, '有档位请先删除再新建')
+            return
+        end
+        local ok_sw, detail_sw = LevelSwitch.go_create_character(slot_index)
+        if not ok_sw then
+            set_text(message_label, '无法进入立档图：' .. tostring(detail_sw))
+            return
+        end
+        info('switch → CreateCharacter slot=' .. tostring(slot_index))
     end)
 
     Kit.on_click(btn.enter, function()

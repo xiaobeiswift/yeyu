@@ -71,6 +71,8 @@ function LocalRunSlotStore:list()
             chapter_hint = s.chapter_hint,
             updated_label = s.updated_label,
             play_time_label = s.play_time_label,
+            run_id = s.run_id,
+            character_id = s.character_id,
         }
     end
     return Result.ok(listed)
@@ -100,6 +102,7 @@ function LocalRunSlotStore:create(slot_index, options)
         updated_label = options.updated_label or '刚刚',
         play_time_label = options.play_time_label or '0 分',
         run_id = options.run_id or ('run_local_' .. tostring(slot_index)),
+        character_id = options.character_id,
     }
     return Result.ok(state.slots[slot_index])
 end

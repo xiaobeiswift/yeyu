@@ -99,6 +99,20 @@ GameHudShell.mount({
 | 进档会话 + 最小 HUD | 云档 CreateNewSave / LoadGameSave / hydrate |
 | 返回角色选择（开发按钮） | 任务 / 背包 / 对话 / 轻功等正式 HUD 模块 |
 | 地图输入在角色页锁定、进档后恢复 | 持久化本地槽到磁盘 |
+| **立档图 `CreateCharacter`** | 正式选人 UI / 单位出场动画 |
+
+### 立档切图
+
+| 项 | 值 |
+|---|---|
+| 关卡目录 | `maps/CreateCharacter` |
+| 关卡 ID | `160897935248241842341095906248275415972`（`wzx.config.map_ids.CREATE_CHARACTER`） |
+| EntryMap ID | `153474936276712664214184199110824525261` |
+| 入口 | save_slot「新建」→ `CreateCharacterIntent.begin_from_slot` → `switch_level` |
+| 回程 | 立档图 SPACE 占位立档 / ESC 取消 → 写 intent → 回 EntryMap 直开 save_slot |
+| 跨图状态 | `custom/wzx_boot_intent.lua`（`BootIntentStore`） |
+
+立档图脚本：`maps/CreateCharacter/script/main.lua`（package.path 指向 EntryMap/script 以共用 wzx/y3）。
 
 ## 官方何时从锁定变为可进
 

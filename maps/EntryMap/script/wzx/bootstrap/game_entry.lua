@@ -204,6 +204,48 @@ function GameEntry.start(options)
         return true, 'runtime_only'
     end
 
+    -- Returning from CreateCharacter: restore slots and skip Loading splash.
+    local CreateCharacterIntent =
+        require 'wzx.application.boot.create_character_intent'
+    local back_intent = CreateCharacterIntent.consume_return_on_entry()
+    if back_intent then
+        info(
+            'return from create-character slot='
+                .. tostring(back_intent.slot_index)
+                .. (back_intent.cancelled and ' cancelled' or '')
+        )
+        session_started = false
+        game_inited = false
+        starting_lock = false
+        pcall(function()
+            y3.game:event('游戏-初始化', function()
+                game_inited = true
+                if y3.ltimer and y3.ltimer.wait then
+                    y3.ltimer.wait(0.05, function()
+                        session_started = true
+                        open_character_select()
+                    end)
+                else
+                    session_started = true
+                    open_character_select()
+                end
+            end)
+        end)
+        pcall(function()
+            if y3.ltimer and y3.ltimer.wait then
+                y3.ltimer.wait(0.5, function()
+                    if session_started then
+                        return
+                    end
+                    game_inited = true
+                    session_started = true
+                    open_character_select()
+                end)
+            end
+        end)
+        return true, 'return_from_create_character'
+    end
+
     session_started = false
     game_inited = false
     starting_lock = false
