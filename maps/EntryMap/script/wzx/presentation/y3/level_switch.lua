@@ -1,5 +1,6 @@
 -- Presentation boundary: switch_level + intent glue (may touch y3.*).
--- Does NOT rewrite EntryMap LoadingPanel art — only hides stock boards / skips UI.
+-- Use y3.game.switch_level(UUID) only — 3-arg request_switch_level(skip_ui)
+-- can return without error yet never leave the map (seen in 07:11 logs).
 
 local LevelSwitch = {}
 
@@ -13,35 +14,7 @@ local function warn(msg)
     print('[WZX][Level] WARN ' .. tostring(msg))
 end
 
-local function get_player()
-    local Kit = require 'wzx.presentation.y3.runtime_ui_kit'
-    return Kit.get_player()
-end
-
----Hide engine splash boards without changing their image bindings.
-local function hide_stock_splash(player)
-    if player == nil or type(y3) ~= 'table' or type(y3.ui) ~= 'table' then
-        return
-    end
-    local names = { 'LoadingPanel', 'LogoPanel' }
-    local i
-    for i = 1, #names do
-        pcall(function()
-            local board = y3.ui.get_ui(player, names[i])
-            if board == nil then
-                return
-            end
-            if board.set_visible then
-                board:set_visible(false)
-            end
-            if board.set_alpha then
-                board:set_alpha(0)
-            end
-        end)
-    end
-end
-
----@param level_id string UUID string required by engine convert_level_id
+---@param level_id string UUID string (not header.map decimal)
 ---@return boolean
 function LevelSwitch.to(level_id)
     if type(level_id) ~= 'string' or level_id == '' then
@@ -58,27 +31,11 @@ function LevelSwitch.to(level_id)
         warn('switch already in flight')
         return false
     end
+
     switching = true
-
-    local player = get_player()
-    hide_stock_splash(player)
-
-    -- Prefer skip stock loading UI (modern splash). Fallback if API rejects args.
     local ok, err = pcall(function()
-        if GameAPI and GameAPI.request_switch_level then
-            -- (level_id, load_same_world?, skip_loading_ui?)
-            GameAPI.request_switch_level(level_id, false, true)
-        else
-            y3.game.switch_level(level_id)
-        end
+        y3.game.switch_level(level_id)
     end)
-    if not ok then
-        warn('request_switch_level(skip_ui) failed: ' .. tostring(err) .. ' — fallback')
-        ok, err = pcall(function()
-            y3.game.switch_level(level_id)
-        end)
-    end
-
     if ok then
         info('switch_level → ' .. level_id)
     else
@@ -88,7 +45,7 @@ function LevelSwitch.to(level_id)
     return ok == true
 end
 
----save_slot「新建」: prepare GO intent then switch.
+---save_slot「新建」
 ---@param slot_index number
 ---@return boolean ok
 ---@return string detail
@@ -115,7 +72,6 @@ function LevelSwitch.go_create_character(slot_index)
     return true, 'switched'
 end
 
----CreateCharacter complete → EntryMap.
 ---@param character table
 ---@return boolean ok
 ---@return string detail
@@ -139,7 +95,6 @@ function LevelSwitch.complete_create_character(character)
     return true, 'returned'
 end
 
----CreateCharacter cancel → EntryMap.
 ---@return boolean ok
 ---@return string detail
 function LevelSwitch.cancel_create_character()
