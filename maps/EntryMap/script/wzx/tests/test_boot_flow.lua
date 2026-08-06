@@ -53,8 +53,9 @@ return {
 
         view = flow:select_backend('local_dev')
         assert.equal(view.value.screen, 'SLOTS')
-        assert.equal(#view.value.slots, 3)
+        assert.equal(#view.value.slots, 5)
         assert.equal(view.value.slots[1].empty, true)
+        assert.equal(view.value.slots[5].empty, true)
 
         view = flow:create_slot(1)
         assert.equal(view.value.slots[1].empty, false)
@@ -85,6 +86,32 @@ return {
         local view = flow:confirm_enter()
         assert.equal(view.value.screen, 'SLOTS')
         assert.equal(view.value.entered, false)
+    end),
+
+    case('open_local_slots jumps straight to five empty slots', function()
+        local bound = BootFlow.bind({})
+        assert.equal(bound.ok, true, reason_of(bound))
+        local flow = bound.value
+        local view = flow:open_local_slots()
+        assert.equal(view.ok, true, reason_of(view))
+        assert.equal(view.value.screen, 'SLOTS')
+        assert.equal(view.value.selected_backend_id, 'local_dev')
+        assert.equal(#view.value.slots, 5)
+        assert.equal(view.value.selected_slot_index, 1)
+        assert.equal(view.value.slots[5].empty, true)
+    end),
+
+    case('create and enter fifth local slot', function()
+        local bound = BootFlow.bind({})
+        local flow = bound.value
+        flow:open_local_slots()
+        local view = flow:select_slot(5)
+        assert.equal(view.value.selected_slot_index, 5)
+        view = flow:create_slot(5)
+        assert.equal(view.value.slots[5].empty, false)
+        view = flow:confirm_enter()
+        assert.equal(view.value.screen, 'ENTERED')
+        assert.equal(view.value.entered_payload.slot_index, 5)
     end),
 
     case('official gate creates unavailable save store', function()

@@ -70,7 +70,25 @@ local function start_loading_once(reason)
     end
 
     LoadingShell.on_finished(function()
-        info('loading 100% — cover remains until next screen')
+        info('loading 100% — opening character select')
+        local SaveSlotShell = require 'wzx.presentation.y3.save_slot_shell'
+        -- Drop loading overlay so save_slot receives clicks.
+        pcall(function()
+            LoadingShell.unmount()
+        end)
+        local ok_slot, detail_slot = SaveSlotShell.mount({
+            on_entered = function(payload)
+                info(
+                    'entered slot='
+                        .. tostring(payload and payload.slot_index)
+                        .. ' run='
+                        .. tostring(payload and payload.run_id)
+                )
+            end,
+        })
+        if not ok_slot then
+            warn('save_slot mount failed: ' .. tostring(detail_slot))
+        end
     end)
 
     local run_ok, run_detail = LoadingShell.run_boot_progress({

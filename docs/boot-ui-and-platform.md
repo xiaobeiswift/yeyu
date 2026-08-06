@@ -6,7 +6,8 @@
 |---|---|
 | 预设画板 GameHUD / CommonTip / Loading / Logo / win / loss | 空壳，默认隐藏（不复用旧树） |
 | **Loading 页（首个重建页面）** | `loading_shell`：单张静图 + 进度 |
-| 背景图 | `assets/ui/loading/loading_bg.jpg`（开场雾钟静帧） |
+| **选择角色页** | `save_slot_shell` + 画板 `save_slot`（五角色位） |
+| 背景图 | `assets/ui/loading/loading_bg.jpg`（开场雾钟静帧，角色页复用） |
 | CommonTip 对话框链路 | 已退役（`common_tip_panel` 为 no-op） |
 | 正式入口 | `wzx.bootstrap.game_entry`（debug / release 同一条） |
 | `dev_runtime` | 仅 debug 热重载：清模块后转调 `game_entry` |
@@ -28,16 +29,32 @@ end)
 LoadingShell.run_boot_progress({ duration = 3.0 })
 ```
 
+Loading 结束后由 `game_entry` 自动：
+
+```lua
+local SaveSlotShell = require 'wzx.presentation.y3.save_slot_shell'
+SaveSlotShell.mount({
+    on_entered = function(payload)
+        -- payload: backend_id, slot_index, run_id, display_name
+    end,
+})
+```
+
 源文件：
 
 | 路径 | 作用 |
 |---|---|
 | `assets/ui/loading/loading_bg.jpg` | Loading 静图 |
-| `wzx/presentation/y3/loading_shell.lua` | 运行时表现 |
+| `wzx/presentation/y3/loading_shell.lua` | Loading 运行时表现 |
+| `maps/EntryMap/ui/save_slot.json` | 选择角色画板 |
+| `maps/EntryMap/ui/prefab/save_slot_card.json` | 单卡预制体 |
+| `wzx/presentation/y3/save_slot_shell.lua` | 角色页绑定 + 点击 |
+| `wzx/application/boot/boot_flow.lua` | 纯逻辑开局状态机 |
+| `wzx/application/boot/local_run_slot_store.lua` | 本地五槽 |
 
 ## 以后怎么接 UI
 
-1. 以空 **GameHUD** 为 host，用 `create_child` 或新 Prefab 搭正式界面（Loading 已按此做）。  
+1. 以空 **GameHUD** 为 host，用 `create_child` 或新 Prefab 搭正式界面（Loading 已按此做；角色页用编辑器画板）。  
 2. 开局逻辑仍在 `wzx.application.boot.boot_flow`（纯逻辑，与表现解耦）。  
 3. 对话内容/播放器仍在 `wzx.config.content.dialogue.*` 与 `presentation/greybox/dialogue_player`。  
 4. **不要**再绑已清空的 CommonTip 树。
@@ -48,16 +65,17 @@ LoadingShell.run_boot_progress({ duration = 3.0 })
 
 | 后端 | 状态 | 玩家能做什么 |
 |---|---|---|
-| 本地开发档 | 可用（逻辑层） | 三槽新建 / 进入 / 删档（需重新做表现） |
-| 官方云档 | UNVERIFIED 锁定 | 验证通过前不可写入 |
+| 本地开发档 | 可用 | 五槽新建 / 进入 / 删档（`save_slot` 画板） |
+| 官方云档 | UNVERIFIED 锁定 | 验证通过前不可写入（角色页暂不展示后端 Tab） |
 
 逻辑模块：
 
 | 模块 | 作用 |
 |---|---|
-| `wzx/application/boot/boot_flow.lua` | 纯逻辑开局状态机 |
+| `wzx/application/boot/boot_flow.lua` | 纯逻辑开局状态机（含 `open_local_slots`） |
 | `wzx/application/boot/platform_backend_status.lua` | UI 用后端状态契约 |
-| `wzx/application/boot/local_run_slot_store.lua` | 本地三槽 |
+| `wzx/application/boot/local_run_slot_store.lua` | 本地五槽 |
+| `wzx/presentation/y3/save_slot_shell.lua` | 选择角色表现层 |
 | `wzx/adapters/y3/official_cloud_gate.lua` | 官方门闩 + SaveStore 探测 |
 
 ## 官方何时从锁定变为可进

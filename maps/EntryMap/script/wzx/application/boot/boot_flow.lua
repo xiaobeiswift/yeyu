@@ -123,6 +123,21 @@ function BootFlow:start()
     return self:get_view()
 end
 
+---Skip title/backend and open the local character-select slots screen.
+---Used by save_slot shell after Loading (UI has no backend tabs).
+function BootFlow:open_local_slots()
+    local state = STATES[self]
+    if state == nil then
+        return invalid('FLOW_REQUIRED')
+    end
+    state.selected_backend_id = 'local_dev'
+    state.screen = SCREEN.SLOTS
+    state.selected_slot_index = 1
+    state.message = nil
+    state.entered_payload = nil
+    return self:get_view()
+end
+
 function BootFlow:select_backend(backend_id)
     local state = STATES[self]
     if state == nil then

@@ -1,0 +1,439 @@
+-- Character-select presentation for maps/EntryMap/ui/save_slot.json.
+-- Pure view binding: state machine stays in wzx.application.boot.boot_flow.
+
+local BootFlow = require 'wzx.application.boot.boot_flow'
+local OfficialCloudGate = require 'wzx.adapters.y3.official_cloud_gate'
+local Kit = require 'wzx.presentation.y3.runtime_ui_kit'
+
+local SaveSlotShell = {}
+
+local BOARD_NAME = 'save_slot'
+
+local ICON = {
+    panel = 134282360,
+    panel_selected = 134264868,
+    empty = 134259271,
+    portrait = 134253687,
+}
+
+local INDEX_LABEL = {
+    [1] = '位 一',
+    [2] = '位 二',
+    [3] = '位 三',
+    [4] = '位 四',
+    [5] = '位 五',
+}
+
+local mounted = false
+local flow = nil
+local board = nil
+local player = nil
+local on_entered_cb = nil
+local events_bound = false
+local card_nodes = {} -- [slot_index] = { root, frame, empty_icon, portrait, ring, selected_mark, name, chapter, time }
+local btn = {
+    back = nil,
+    delete = nil,
+    create = nil,
+    enter = nil,
+}
+local message_label = nil
+
+local function info(msg)
+    local text = '[WZX][SaveSlot] ' .. tostring(msg)
+    pcall(function()
+        if log and log.info then
+            log.info(text)
+        end
+    end)
+    print(text)
+end
+
+local function warn(msg)
+    local text = '[WZX][SaveSlot] ' .. tostring(msg)
+    pcall(function()
+        if log and log.warn then
+            log.warn(text)
+        elseif log and log.info then
+            log.info(text)
+        end
+    end)
+    print(text)
+end
+
+local function get_player()
+    return Kit.get_player()
+end
+
+---@param path string absolute board path "save_slot.a.b"
+local function try_get_ui(path)
+    local p = player or get_player()
+    if p == nil or type(y3) ~= 'table' or type(y3.ui) ~= 'table' or type(y3.ui.get_ui) ~= 'function' then
+        return nil
+    end
+    local ok, ui = pcall(function()
+        return y3.ui.get_ui(p, path)
+    end)
+    if ok then
+        return ui
+    end
+    return nil
+end
+
+---@param parent any
+---@param name string
+local function child(parent, name)
+    if parent == nil then
+        return nil
+    end
+    local ok, ui = pcall(function()
+        return parent:get_child(name)
+    end)
+    if ok then
+        return ui
+    end
+    return nil
+end
+
+local function set_image(ui, img)
+    if ui == nil or img == nil then
+        return
+    end
+    pcall(function()
+        ui:set_image(img)
+    end)
+end
+
+local function set_visible(ui, show)
+    Kit.set_visible(ui, show == true)
+end
+
+local function set_text(ui, text)
+    Kit.set_label_text(ui, text)
+end
+
+local function set_button_enable(ui, enable)
+    Kit.set_button_enable(ui, enable)
+end
+
+local function resolve_nodes()
+    board = try_get_ui(BOARD_NAME)
+    if board == nil then
+        return false, 'board_missing'
+    end
+
+    local layout_slot = child(board, 'layout_slot')
+    local layout_button = child(board, 'layout_button')
+    local layout_tip = child(board, 'layout_提示')
+    message_label = child(layout_tip, 'Lable_提示')
+        or try_get_ui(BOARD_NAME .. '.layout_提示.Lable_提示')
+
+    card_nodes = {}
+    local index
+    for index = 1, 5 do
+        local card_name = 'save_slot_card_' .. tostring(index)
+        local root = child(layout_slot, card_name)
+            or try_get_ui(BOARD_NAME .. '.layout_slot.' .. card_name)
+        if root == nil then
+            return false, 'card_missing_' .. tostring(index)
+        end
+        local tishi = child(root, 'tishi')
+        card_nodes[index] = {
+            root = root,
+            frame = child(root, 'frame'),
+            empty_icon = child(root, 'empty_icon'),
+            portrait = child(root, 'portrait'),
+            ring = child(root, 'portrait_ring'),
+            selected_mark = child(root, 'selected_mark'),
+            name = child(tishi, 'name') or child(root, 'name'),
+            chapter = child(tishi, 'chapter') or child(root, 'chapter'),
+            time = child(tishi, 'time') or child(root, 'time'),
+            index = child(root, 'index'),
+        }
+        if card_nodes[index].index then
+            set_text(card_nodes[index].index, INDEX_LABEL[index] or ('位 ' .. tostring(index)))
+        end
+    end
+
+    btn.back = child(layout_button, 'button_返回')
+        or try_get_ui(BOARD_NAME .. '.layout_button.button_返回')
+    btn.delete = child(layout_button, 'button_删除')
+        or try_get_ui(BOARD_NAME .. '.layout_button.button_删除')
+    btn.create = child(layout_button, 'button_新建')
+        or try_get_ui(BOARD_NAME .. '.layout_button.button_新建')
+    btn.enter = child(layout_button, 'button_进入')
+        or try_get_ui(BOARD_NAME .. '.layout_button.button_进入')
+
+    if btn.back == nil or btn.create == nil or btn.enter == nil or btn.delete == nil then
+        return false, 'buttons_missing'
+    end
+    return true, 'ok'
+end
+
+local function apply_card(slot_index, slot, selected)
+    local nodes = card_nodes[slot_index]
+    if nodes == nil then
+        return
+    end
+    local empty = slot == nil or slot.empty == true
+    set_image(nodes.frame, selected and ICON.panel_selected or ICON.panel)
+    set_visible(nodes.empty_icon, empty)
+    set_visible(nodes.portrait, not empty)
+    set_visible(nodes.ring, selected and not empty)
+    -- selected_mark only for filled selected cards (empty + mark looks wrong)
+    set_visible(nodes.selected_mark, selected and not empty)
+
+    if empty then
+        set_text(nodes.name, '空 位')
+        set_text(nodes.chapter, '尚未立档')
+        set_text(nodes.time, '点击新建角色')
+        if nodes.empty_icon then
+            set_image(nodes.empty_icon, ICON.empty)
+        end
+    else
+        set_text(nodes.name, tostring(slot.display_name or '未命名'))
+        set_text(nodes.chapter, tostring(slot.chapter_hint or ''))
+        local time_line = slot.play_time_label or slot.updated_label or ''
+        if slot.play_time_label and slot.updated_label then
+            time_line = tostring(slot.play_time_label) .. ' · ' .. tostring(slot.updated_label)
+        end
+        set_text(nodes.time, tostring(time_line))
+        if nodes.portrait then
+            set_image(nodes.portrait, ICON.portrait)
+        end
+    end
+end
+
+local function apply_view(view)
+    if view == nil then
+        return
+    end
+
+    if view.entered then
+        set_visible(board, false)
+        if type(on_entered_cb) == 'function' then
+            pcall(on_entered_cb, view.entered_payload)
+        end
+        return
+    end
+
+    if view.screen ~= 'SLOTS' then
+        -- This shell only owns the character-select screen.
+        set_visible(board, view.screen == 'SLOTS')
+        return
+    end
+
+    set_visible(board, true)
+
+    local slots = view.slots or {}
+    local selected = view.selected_slot_index or 1
+    local selected_slot = slots[selected]
+    local empty_selected = selected_slot == nil or selected_slot.empty == true
+
+    local index
+    for index = 1, 5 do
+        apply_card(index, slots[index], index == selected)
+    end
+
+    set_button_enable(btn.create, empty_selected)
+    set_button_enable(btn.enter, not empty_selected)
+    set_button_enable(btn.delete, not empty_selected)
+    set_button_enable(btn.back, true)
+
+    local msg = view.message
+    if msg == nil or msg == '' then
+        msg = view.hint or '点选角色位 · 空位可新建 · 有档可进入'
+    end
+    set_text(message_label, msg)
+end
+
+local function present(result)
+    if result == nil then
+        return
+    end
+    if not result.ok then
+        local reason = 'unknown'
+        if result.error and result.error.details and result.error.details.reason then
+            reason = tostring(result.error.details.reason)
+        elseif result.error and result.error.code then
+            reason = tostring(result.error.code)
+        end
+        warn('action failed: ' .. reason)
+        if message_label then
+            set_text(message_label, '操作失败：' .. reason)
+        end
+        return
+    end
+    apply_view(result.value)
+end
+
+local function act(fn)
+    if flow == nil then
+        return
+    end
+    present(fn())
+end
+
+local function bind_events()
+    if events_bound then
+        return true
+    end
+
+    local index
+    for index = 1, 5 do
+        local slot_i = index
+        local root = card_nodes[index] and card_nodes[index].root
+        if root then
+            local ok = Kit.on_click(root, function()
+                act(function()
+                    return flow:select_slot(slot_i)
+                end)
+            end)
+            if not ok then
+                -- Prefer frame as click target if root is not interactive.
+                Kit.on_click(card_nodes[index].frame, function()
+                    act(function()
+                        return flow:select_slot(slot_i)
+                    end)
+                end)
+            end
+        end
+    end
+
+    Kit.on_click(btn.back, function()
+        act(function()
+            -- No title screen yet: stay on character select.
+            local view = flow:get_view()
+            if not view.ok then
+                return view
+            end
+            if view.value.screen ~= 'SLOTS' then
+                return flow:open_local_slots()
+            end
+            local idx = view.value.selected_slot_index or 1
+            return flow:select_slot(idx)
+        end)
+    end)
+
+    Kit.on_click(btn.delete, function()
+        act(function()
+            return flow:delete_slot()
+        end)
+    end)
+
+    Kit.on_click(btn.create, function()
+        act(function()
+            return flow:create_slot()
+        end)
+    end)
+
+    Kit.on_click(btn.enter, function()
+        act(function()
+            return flow:confirm_enter()
+        end)
+    end)
+
+    events_bound = true
+    return true
+end
+
+---@param options? { on_entered?: fun(payload: table), flow?: table }
+---@return boolean ok
+---@return string detail
+function SaveSlotShell.mount(options)
+    options = options or {}
+    if type(y3) ~= 'table' or type(y3.ui) ~= 'table' then
+        return false, 'y3_not_available'
+    end
+
+    player = get_player()
+    if player == nil then
+        return false, 'no_player'
+    end
+
+    Kit.sanitize_startup_ui(player)
+    Kit.set_default_hud_visible(player, true)
+
+    local ok_nodes, detail = resolve_nodes()
+    if not ok_nodes then
+        return false, detail
+    end
+
+    if options.flow ~= nil then
+        flow = options.flow
+    else
+        local bound = BootFlow.bind({
+            platform_options = OfficialCloudGate.platform_options(),
+        })
+        if not bound.ok then
+            return false, 'boot_bind_failed'
+        end
+        flow = bound.value
+    end
+
+    on_entered_cb = options.on_entered
+    events_bound = false
+    bind_events()
+
+    pcall(function()
+        board:set_visible(true)
+        if board.set_z_order then
+            board:set_z_order(9000)
+        end
+        if board.set_intercepts_operations then
+            board:set_intercepts_operations(true)
+        end
+    end)
+
+    -- Hide loading cover host if still intercepting clicks.
+    pcall(function()
+        local loading_host = try_get_ui('panel_1')
+        if loading_host and loading_host.set_intercepts_operations then
+            loading_host:set_intercepts_operations(false)
+        end
+    end)
+
+    present(flow:open_local_slots())
+    mounted = true
+    info('mounted character select')
+    return true, 'mounted'
+end
+
+function SaveSlotShell.unmount()
+    if board then
+        set_visible(board, false)
+        pcall(function()
+            if board.set_intercepts_operations then
+                board:set_intercepts_operations(false)
+            end
+        end)
+    end
+    board = nil
+    player = nil
+    flow = nil
+    on_entered_cb = nil
+    events_bound = false
+    card_nodes = {}
+    btn = { back = nil, delete = nil, create = nil, enter = nil }
+    message_label = nil
+    mounted = false
+end
+
+function SaveSlotShell.is_mounted()
+    return mounted
+end
+
+function SaveSlotShell.get_flow()
+    return flow
+end
+
+---Refresh from current flow view (e.g. after external store change).
+function SaveSlotShell.refresh()
+    if flow == nil then
+        return false
+    end
+    present(flow:get_view())
+    return true
+end
+
+return SaveSlotShell

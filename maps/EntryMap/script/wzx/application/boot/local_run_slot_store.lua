@@ -1,12 +1,12 @@
--- Lightweight local run slots for boot UI (3 slots). Not the 5-layer cloud SaveStore.
--- Lets the title → slot → enter flow work without official platform verification.
+-- Lightweight local run slots for boot UI (5 character slots).
+-- Not the cloud SaveStore envelope path; only feeds BootFlow / save_slot shell.
 
 local Result = require 'wzx.domain.common.result'
 
 local LocalRunSlotStore = {}
 local STATES = setmetatable({}, { __mode = 'k' })
 
-local SLOT_COUNT = 3
+local SLOT_COUNT = 5
 
 local function invalid(reason, details)
     details = details or {}

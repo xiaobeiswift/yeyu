@@ -155,8 +155,12 @@ local function present(view_result)
                             return v
                         end
                         local cur = v.value.selected_slot_index or 1
+                        local slot_n = #v.value.slots
+                        if slot_n < 1 then
+                            slot_n = 5
+                        end
                         local next_i = cur + 1
-                        if next_i > 3 then
+                        if next_i > slot_n then
                             next_i = 1
                         end
                         return flow:select_slot(next_i)

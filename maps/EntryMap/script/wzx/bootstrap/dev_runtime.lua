@@ -25,6 +25,7 @@ local clear_list = {
     'wzx.presentation.y3.runtime_ui_kit',
     'wzx.presentation.y3.loading_shell',
     'wzx.presentation.y3.loading_frame_ids',
+    'wzx.presentation.y3.save_slot_shell',
     'wzx.presentation.y3.boot_menu_shell',
     'wzx.presentation.y3.greybox_dialogue_shell',
     'wzx.presentation.greybox.dialogue_player',

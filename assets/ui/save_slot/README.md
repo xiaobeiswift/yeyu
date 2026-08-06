@@ -134,7 +134,7 @@ assets/ui/save_slot/preview/save_slot.html
 
 | UI | ViewModel 字段（建议） |
 |----|------------------------|
-| 角色位 1–5 | `slots[1..5]`（当前 `local_run_slot_store` 若仍为 3，实现时需扩到 5） |
+| 角色位 1–5 | `slots[1..5]`（`local_run_slot_store.SLOT_COUNT = 5`） |
 | 空态 | `empty == true` |
 | 角色名 | `display_name` |
 | 章节 | `chapter_hint` |
