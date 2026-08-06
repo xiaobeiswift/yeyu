@@ -1,1 +1,10 @@
-{}
+{
+    "ui/134230791": {
+        "default_editor_id": 134230791, 
+        "describe": "", 
+        "key": "ui/134230791", 
+        "name": "loading_bg", 
+        "path": "ui/134230791", 
+        "uid": "res_icon_ui/134230791"
+    }
+}

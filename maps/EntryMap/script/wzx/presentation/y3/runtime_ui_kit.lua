@@ -8,7 +8,9 @@ local ROOT_CANDIDATES = {
     'GameHUD',
 }
 
--- All preset boards stay hidden until a real presentation is rebuilt.
+-- Preset boards hidden at sanitize.
+-- LoadingPanel is hidden on purpose: engine often auto-dismisses it when the world is ready.
+-- Our loading UI is built on custom panel_1 instead.
 local HIDDEN_BOARDS = {
     'CommonTip',
     'LoadingPanel',
@@ -23,13 +25,22 @@ local function shell_log(msg)
 end
 
 function RuntimeUIKit.get_player()
-    if type(y3) ~= 'table' or type(y3.player) ~= 'function' then
+    if type(y3) ~= 'table' or y3.player == nil then
         return nil
+    end
+    -- Prefer local player; fall back to slot 1.
+    if type(y3.player.get_local) == 'function' then
+        local ok, player = pcall(function()
+            return y3.player.get_local()
+        end)
+        if ok and player ~= nil then
+            return player
+        end
     end
     local ok, player = pcall(function()
         return y3.player(1)
     end)
-    if ok then
+    if ok and player ~= nil then
         return player
     end
     return nil

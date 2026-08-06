@@ -1,25 +1,46 @@
 # 开局 UI 与官方平台接入约定
 
-## 当前状态（干净起点）
-
-**地图 UI 已清成空壳；开发入口不再自动挂开局/对话界面。**
+## 当前状态
 
 | 项 | 状态 |
 |---|---|
-| 预设画板 GameHUD / CommonTip / Loading / Logo / win / loss | 空 `children`，默认隐藏 |
-| 自定义 panel_1 / hero 元件 | 已删除 |
+| 预设画板 GameHUD / CommonTip / Loading / Logo / win / loss | 空壳，默认隐藏（不复用旧树） |
+| **Loading 页（首个重建页面）** | `loading_shell`：单张静图 + 进度 |
+| 背景图 | `assets/ui/loading/loading_bg.jpg`（开场雾钟静帧） |
 | CommonTip 对话框链路 | 已退役（`common_tip_panel` 为 no-op） |
-| `dev_runtime` | 只启 Foundation host + `sanitize_startup_ui` |
+| 正式入口 | `wzx.bootstrap.game_entry`（debug / release 同一条） |
+| `dev_runtime` | 仅 debug 热重载：清模块后转调 `game_entry` |
 | 屏上 print / profile 叠层 | `main.lua` 关闭 |
 
-备份：`archive/ui_json_backup_before_cleanup/`（含清理前 CommonTip 与原 2.4MB GameHUD）。
+备份：`archive/ui_json_backup_before_cleanup/`。
 
-## 以后怎么接 UI（重头做）
+### Loading 页用法
 
-1. 以空 **GameHUD** 为 host，用 `create_child` 或新 Prefab 搭正式界面。  
+正式入口在 `main.lua` → `wzx.bootstrap.game_entry`（debug 经 `dev_runtime` 热重载转调同一入口）。
+
+```lua
+local LoadingShell = require 'wzx.presentation.y3.loading_shell'
+LoadingShell.mount()
+LoadingShell.set_progress(42, '整理行囊…')
+LoadingShell.on_finished(function()
+    -- 切到标题/主菜单
+end)
+LoadingShell.run_boot_progress({ duration = 3.0 })
+```
+
+源文件：
+
+| 路径 | 作用 |
+|---|---|
+| `assets/ui/loading/loading_bg.jpg` | Loading 静图 |
+| `wzx/presentation/y3/loading_shell.lua` | 运行时表现 |
+
+## 以后怎么接 UI
+
+1. 以空 **GameHUD** 为 host，用 `create_child` 或新 Prefab 搭正式界面（Loading 已按此做）。  
 2. 开局逻辑仍在 `wzx.application.boot.boot_flow`（纯逻辑，与表现解耦）。  
 3. 对话内容/播放器仍在 `wzx.config.content.dialogue.*` 与 `presentation/greybox/dialogue_player`。  
-4. 新 shell 挂载时再写 `presentation/y3/*`，**不要**再绑已清空的 CommonTip 树。
+4. **不要**再绑已清空的 CommonTip 树。
 
 ## 原则（平台）
 

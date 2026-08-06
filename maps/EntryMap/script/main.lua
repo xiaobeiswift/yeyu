@@ -1,9 +1,8 @@
--- WZX engine entry. Gameplay systems are registered only after their contracts pass.
+-- WZX engine entry. Same boot path for debug and release.
 
 local is_debug = y3.game.is_debug_mode()
 
 -- Never paint engine/WZX logs onto the game viewport.
--- y3's default print() still calls print_to_game in debug mode; override below.
 y3.config.log.toGame = false
 y3.config.log.toDialog = false
 
@@ -13,8 +12,7 @@ else
     y3.config.log.level = 'info'
 end
 
--- Keep console / Y3 Helper; skip viewport tips.
--- (Y3 debug print always paints the game window; project override ignores that path.)
+-- Console / Y3 Helper only; no on-screen print spam.
 do
     local consoleprint = rawget(_G, 'consoleprint')
     ---@diagnostic disable-next-line: lowercase-global
@@ -34,24 +32,24 @@ do
                 y3.develop.helper.print(message)
             end
         end)
+        -- Also mirror into engine log so we can diagnose boot without console.
+        pcall(function()
+            if log and log.info then
+                log.info(message)
+            end
+        end)
     end
 end
 
--- Hide engine performance overlay (延迟/帧数/Drawcall/...) when API exists.
+-- Hide engine performance overlay when API exists.
 pcall(function()
     if GameAPI and GameAPI.api_enable_profile then
         GameAPI.api_enable_profile(false)
     end
 end)
 
--- Clear any tip text left from previous session / early prints.
-pcall(function()
-    if y3.ui and y3.ui.display_message and y3.player and y3.player.get_local then
-        y3.ui.display_message(y3.player.get_local(), '', 0.01)
-    end
-end)
+-- Note: do NOT clear display_message on 游戏-初始化 — Loading uses it for on-screen status.
 
--- Re-assert after game init (some engines re-enable profile/debug HUD on start).
 pcall(function()
     y3.game:event('游戏-初始化', function()
         pcall(function()
@@ -59,22 +57,16 @@ pcall(function()
                 GameAPI.api_enable_profile(false)
             end
         end)
-        pcall(function()
-            if y3.ui and y3.ui.display_message and y3.player and y3.player.get_local then
-                y3.ui.display_message(y3.player.get_local(), '', 0.01)
-            end
-        end)
     end)
 end)
 
+-- Official game boot (Loading first screen). Debug uses include for hot reload.
 if is_debug then
     include 'wzx.bootstrap.dev_runtime'
 else
-    local runtime = require 'wzx.bootstrap.y3_runtime'
-    local started = runtime.start()
-    if started.ok then
-        print('[WZX] Foundation V1 runtime ready; gameplay and unverified platform features are disabled')
-    else
-        print('[WZX] Runtime bootstrap failed: ' .. tostring(started.error.code))
+    local GameEntry = require 'wzx.bootstrap.game_entry'
+    local ok, detail = GameEntry.start()
+    if not ok then
+        print('[WZX] game entry failed: ' .. tostring(detail))
     end
 end
