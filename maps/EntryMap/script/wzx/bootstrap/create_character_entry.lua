@@ -37,10 +37,23 @@ function CreateCharacterEntry.start(options)
         warn('no GO intent — default slot=' .. tostring(slot_index))
     end
 
-    -- Lock map input; camera apply later when stage points exist.
+    -- Lock map input; hide stock LoadingPanel/Logo if engine still flashes them.
     pcall(function()
         local Kit = require 'wzx.presentation.y3.runtime_ui_kit'
         local player = Kit.get_player()
+        Kit.sanitize_startup_ui(player)
+        if player and type(y3.ui) == 'table' and type(y3.ui.get_ui) == 'function' then
+            local names = { 'LoadingPanel', 'LogoPanel', 'CommonTip' }
+            local i
+            for i = 1, #names do
+                local ok_ui, board = pcall(function()
+                    return y3.ui.get_ui(player, names[i])
+                end)
+                if ok_ui and board and board.set_visible then
+                    board:set_visible(false)
+                end
+            end
+        end
         if player and y3.camera and y3.camera.disable_camera_move then
             y3.camera.disable_camera_move(player)
         end

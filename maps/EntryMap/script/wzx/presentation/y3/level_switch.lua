@@ -31,11 +31,17 @@ function LevelSwitch.to(level_id)
         return false
     end
     switching = true
+    -- Prefer GameAPI with skip_loading_ui: default LoadingPanel uses modern stock art (e.g. 106407).
     local ok, err = pcall(function()
-        y3.game.switch_level(level_id)
+        if GameAPI and GameAPI.request_switch_level then
+            -- (level_id, load_same_world?, skip_loading_ui?)
+            GameAPI.request_switch_level(level_id, false, true)
+        else
+            y3.game.switch_level(level_id)
+        end
     end)
     if ok then
-        info('switch_level → ' .. level_id)
+        info('switch_level → ' .. level_id .. ' (skip_loading_ui)')
     else
         switching = false
         warn('switch_level error: ' .. tostring(err))

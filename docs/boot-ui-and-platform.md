@@ -112,8 +112,10 @@ GameHudShell.mount({
 | 入口 | save_slot「新建」→ `CreateCharacterIntent.begin_from_slot` → `switch_level` |
 | 回程 | 立档图 SPACE 占位立档 / ESC 取消 → 写 intent → 回 EntryMap 直开 save_slot |
 | 跨图状态 | `custom/wzx_boot_intent.lua`（`BootIntentStore`） |
+| 切图 Loading | `GameAPI.request_switch_level(id, false, true)` **跳过**引擎默认 LoadingPanel（现代风 106407） |
 
-立档图脚本：`maps/CreateCharacter/script/main.lua`（package.path 指向 EntryMap/script 以共用 wzx/y3）。
+立档图脚本：`maps/CreateCharacter/script/main.lua`（package.path 指向 EntryMap/script 以共用 wzx/y3）。  
+`CreateCharacter/ui/LoadingPanel` 已默认隐藏，背景改绑雾钟 `134230791` 兜底。
 
 ## 官方何时从锁定变为可进
 
