@@ -1,2 +1,0 @@
-file 'D:/y3/games/2.0/game/LocalData/yeyu/assets/video/_hold_frames/last48.mp4'
-file 'D:/y3/games/2.0/game/LocalData/yeyu/assets/video/_hold_frames/last48_rev.mp4'

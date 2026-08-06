@@ -1,0 +1,14 @@
+{
+    "adapt_mode": 2, 
+    "anim_data": {}, 
+    "auto_create": true, 
+    "children": [], 
+    "name": "panel_1", 
+    "opacity": 1.0, 
+    "script_name": "", 
+    "type": 2, 
+    "ui_anims": [], 
+    "uid": "0253e0a3-881b-4ad6-af1a-0be44279cca1", 
+    "visible": true, 
+    "zorder": 400
+}

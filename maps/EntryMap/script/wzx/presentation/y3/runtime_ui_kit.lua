@@ -3,11 +3,19 @@
 
 local RuntimeUIKit = {}
 
+-- Empty GameHUD is the only host for future runtime UI.
 local ROOT_CANDIDATES = {
     'GameHUD',
+}
+
+-- All preset boards stay hidden until a real presentation is rebuilt.
+local HIDDEN_BOARDS = {
+    'CommonTip',
     'LoadingPanel',
     'LogoPanel',
-    'CommonTip',
+    'loss',
+    'win',
+    'OpeningCinematic',
 }
 
 local function shell_log(msg)
@@ -61,6 +69,29 @@ function RuntimeUIKit.set_default_hud_visible(player, prefer_hide)
             y3.ui.set_prefab_ui_visible(player, not prefer_hide)
         end
     end)
+end
+
+---Hide leftover official boards and default prefab HUD noise.
+---@param player? any
+function RuntimeUIKit.sanitize_startup_ui(player)
+    player = player or RuntimeUIKit.get_player()
+    if player == nil or type(y3.ui) ~= 'table' then
+        return
+    end
+    RuntimeUIKit.set_default_hud_visible(player, true)
+    if type(y3.ui.get_ui) ~= 'function' then
+        return
+    end
+    local index
+    for index = 1, #HIDDEN_BOARDS do
+        local name = HIDDEN_BOARDS[index]
+        pcall(function()
+            local board = y3.ui.get_ui(player, name)
+            if board and board.set_visible then
+                board:set_visible(false)
+            end
+        end)
+    end
 end
 
 ---@param ui any

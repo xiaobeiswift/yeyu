@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Repository>
 <Items>
-<Item><Type>Texture</Type><Flags>256</Flags><GUID>1b8a07e6-82a4-4eb7-a74c-b7059e6b4ad0</GUID><Package>ui</Package><Class>Texture2D</Class><Name>134272620</Name><Annotation><SourcePath>D:/kk_.4296029/temp.png</SourcePath><CreationTime>1785953297</CreationTime><MD5>6f2869957f18388a3f680cac2176e558</MD5></Annotation></Item>
 <Item><Type>Texture</Type><Flags>256</Flags><GUID>e5fa88d3-946f-4eb8-abe6-977d08652431</GUID><Package>ui</Package><Class>Texture2D</Class><Name>new_independ_billboard_batch_ui_0</Name><Annotation><SourcePath>D:/kk_6.999596/temp.png</SourcePath><CreationTime>1785769397</CreationTime><MD5>bbdedb88204dd42599cbea5addea1e39</MD5></Annotation></Item>
 </Items>
 </Repository>
