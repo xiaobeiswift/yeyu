@@ -7,6 +7,7 @@ local LocalRunSlotStore = {}
 local STATES = setmetatable({}, { __mode = 'k' })
 
 local SLOT_COUNT = 5
+local SHARED = nil
 
 local function invalid(reason, details)
     details = details or {}
@@ -35,6 +36,19 @@ function LocalRunSlotStore.new()
     end
     STATES[store] = { slots = slots }
     return store
+end
+
+---Process-wide store for boot UI so returning from GameHUD keeps slots.
+---Tests should call `new()` (or `reset_shared()` first) for isolation.
+function LocalRunSlotStore.shared()
+    if SHARED == nil then
+        SHARED = LocalRunSlotStore.new()
+    end
+    return SHARED
+end
+
+function LocalRunSlotStore.reset_shared()
+    SHARED = nil
 end
 
 function LocalRunSlotStore.slot_count()

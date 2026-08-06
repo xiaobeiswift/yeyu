@@ -249,6 +249,7 @@ function BootFlow:confirm_enter()
         slot_index = slot.value.slot_index,
         run_id = slot.value.run_id,
         display_name = slot.value.display_name,
+        chapter_hint = slot.value.chapter_hint,
     }
     state.message = '进入：' .. slot.value.display_name
     return self:get_view()

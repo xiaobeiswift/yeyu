@@ -1,10 +1,12 @@
 -- Game entry: Loading must start only after 游戏-初始化.
 -- create_child UI made before init is wiped by the engine (looks like a one-frame flash).
+-- Flow: Loading → save_slot → local run session → minimal GameHUD.
 
 local GameEntry = {}
 local game_inited = false
 local session_started = false
 local starting_lock = false
+local enter_in_progress = false
 
 local function info(msg)
     local text = '[WZX] ' .. tostring(msg)
@@ -26,6 +28,94 @@ local function warn(msg)
         end
     end)
     print(text)
+end
+
+local open_character_select
+local enter_local_run
+
+function enter_local_run(payload)
+    if enter_in_progress then
+        return
+    end
+    enter_in_progress = true
+
+    local SaveSlotShell = require 'wzx.presentation.y3.save_slot_shell'
+    local GameHudShell = require 'wzx.presentation.y3.game_hud_shell'
+    local LocalRunSession = require 'wzx.application.boot.local_run_session'
+
+    pcall(function()
+        if SaveSlotShell.is_mounted and SaveSlotShell.is_mounted() then
+            SaveSlotShell.unmount()
+        end
+    end)
+    pcall(function()
+        if GameHudShell.is_mounted and GameHudShell.is_mounted() then
+            GameHudShell.unmount()
+        end
+    end)
+
+    local started = LocalRunSession.start(payload)
+    if not started.ok then
+        enter_in_progress = false
+        local reason = 'unknown'
+        if started.error and started.error.details and started.error.details.reason then
+            reason = tostring(started.error.details.reason)
+        end
+        warn('local run start failed: ' .. reason)
+        open_character_select()
+        return
+    end
+
+    info(
+        'local run active slot='
+            .. tostring(started.value.slot_index)
+            .. ' run='
+            .. tostring(started.value.run_id)
+            .. ' name='
+            .. tostring(started.value.display_name)
+    )
+
+    local ok_hud, detail_hud = GameHudShell.mount({
+        session = started.value,
+        on_return_to_slots = function()
+            info('return to character select')
+            pcall(function()
+                GameHudShell.unmount()
+            end)
+            LocalRunSession.stop()
+            open_character_select()
+        end,
+    })
+    enter_in_progress = false
+    if not ok_hud then
+        warn('game hud mount failed: ' .. tostring(detail_hud))
+        LocalRunSession.stop()
+        open_character_select()
+    end
+end
+
+function open_character_select()
+    local SaveSlotShell = require 'wzx.presentation.y3.save_slot_shell'
+    local GameHudShell = require 'wzx.presentation.y3.game_hud_shell'
+    local LocalRunSession = require 'wzx.application.boot.local_run_session'
+
+    pcall(function()
+        if GameHudShell.is_mounted and GameHudShell.is_mounted() then
+            GameHudShell.unmount()
+        end
+    end)
+    if not LocalRunSession.is_active() then
+        -- ok
+    else
+        LocalRunSession.stop()
+    end
+
+    local ok_slot, detail_slot = SaveSlotShell.mount({
+        on_entered = enter_local_run,
+    })
+    if not ok_slot then
+        warn('save_slot mount failed: ' .. tostring(detail_slot))
+    end
 end
 
 local function start_loading_once(reason)
@@ -71,24 +161,10 @@ local function start_loading_once(reason)
 
     LoadingShell.on_finished(function()
         info('loading 100% — opening character select')
-        local SaveSlotShell = require 'wzx.presentation.y3.save_slot_shell'
-        -- Drop loading overlay so save_slot receives clicks.
         pcall(function()
             LoadingShell.unmount()
         end)
-        local ok_slot, detail_slot = SaveSlotShell.mount({
-            on_entered = function(payload)
-                info(
-                    'entered slot='
-                        .. tostring(payload and payload.slot_index)
-                        .. ' run='
-                        .. tostring(payload and payload.run_id)
-                )
-            end,
-        })
-        if not ok_slot then
-            warn('save_slot mount failed: ' .. tostring(detail_slot))
-        end
+        open_character_select()
     end)
 
     local run_ok, run_detail = LoadingShell.run_boot_progress({

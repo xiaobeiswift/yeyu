@@ -2,6 +2,7 @@
 -- Pure view binding: state machine stays in wzx.application.boot.boot_flow.
 
 local BootFlow = require 'wzx.application.boot.boot_flow'
+local LocalRunSlotStore = require 'wzx.application.boot.local_run_slot_store'
 local OfficialCloudGate = require 'wzx.adapters.y3.official_cloud_gate'
 local Kit = require 'wzx.presentation.y3.runtime_ui_kit'
 
@@ -484,6 +485,8 @@ function SaveSlotShell.mount(options)
     else
         local bound = BootFlow.bind({
             platform_options = OfficialCloudGate.platform_options(),
+            -- Keep slots when player returns from GameHUD.
+            local_slots = options.local_slots or LocalRunSlotStore.shared(),
         })
         if not bound.ok then
             return false, 'boot_bind_failed'
