@@ -1,5 +1,6 @@
 -- Character-select presentation for maps/EntryMap/ui/save_slot.json.
--- Pure view binding: state machine stays in wzx.application.boot.boot_flow.
+-- Appearance is owned by the editor board/prefab — this shell only binds
+-- click handlers, empty/filled text, selection visibility, and map input lock.
 
 local BootFlow = require 'wzx.application.boot.boot_flow'
 local LocalRunSlotStore = require 'wzx.application.boot.local_run_slot_store'
@@ -10,19 +11,10 @@ local SaveSlotShell = {}
 
 local BOARD_NAME = 'save_slot'
 
+-- Frame swap for selection only (IDs match board-bound v2 assets).
 local ICON = {
     panel = 134282360,
     panel_selected = 134264868,
-    empty = 134259271,
-    portrait = 134253687,
-}
-
-local INDEX_LABEL = {
-    [1] = '位 一',
-    [2] = '位 二',
-    [3] = '位 三',
-    [4] = '位 四',
-    [5] = '位 五',
 }
 
 local DEFAULT_TIP = '点选角色位 · 空位可新建 · 有档可进入'
@@ -34,7 +26,8 @@ local player = nil
 local on_entered_cb = nil
 local events_bound = false
 local map_input_locked = false
-local card_nodes = {} -- [slot_index] = { root, frame, empty_icon, portrait, ring, selected_mark, name, chapter, time }
+-- [slot_index] = nodes + last_empty / last_selected to avoid thrashing art
+local card_nodes = {}
 local btn = {
     back = nil,
     delete = nil,
@@ -42,10 +35,6 @@ local btn = {
     enter = nil,
 }
 local message_label = nil
-local title_label = nil
-local title_deco_left = nil
-local title_deco_right = nil
-local image_bg = nil
 local swallow_nodes = {}
 
 local function info(msg)
@@ -224,64 +213,7 @@ local function harden_ui_block()
     track(layout_button)
     track(layout_tip)
     track(child(layout_main, 'image_bg'))
-    -- Full-screen bg is the primary hit surface over the world.
-    local bg = child(layout_main, 'image_bg')
-    if bg then
-        pcall(function()
-            if bg.set_z_order then
-                -- Keep under title/cards/buttons but above world.
-                bg:set_z_order(1)
-            end
-        end)
-    end
-end
-
----Title sits on fog bg and washes out; boost contrast at mount.
-local function polish_title_contrast()
-    if title_label then
-        pcall(function()
-            if title_label.set_text_color then
-                -- Brighter gold than board default (240,215,140)
-                title_label:set_text_color(255, 236, 175, 255)
-            end
-            if title_label.set_font_size then
-                title_label:set_font_size(72)
-            end
-        end)
-        set_text(title_label, '选择角色')
-    end
-    -- Darken fullscreen fog slightly so gold title / cards pop.
-    if image_bg then
-        pcall(function()
-            if image_bg.set_image_color then
-                image_bg:set_image_color(70, 78, 88, 255)
-            end
-            if image_bg.set_alpha then
-                -- 0~1 or 0~255 depending on build; try fraction first.
-                image_bg:set_alpha(0.82)
-            end
-        end)
-    end
-    if title_deco_left then
-        pcall(function()
-            if title_deco_left.set_image_color then
-                title_deco_left:set_image_color(255, 230, 170, 255)
-            end
-            if title_deco_left.set_alpha then
-                title_deco_left:set_alpha(1)
-            end
-        end)
-    end
-    if title_deco_right then
-        pcall(function()
-            if title_deco_right.set_image_color then
-                title_deco_right:set_image_color(255, 230, 170, 255)
-            end
-            if title_deco_right.set_alpha then
-                title_deco_right:set_alpha(1)
-            end
-        end)
-    end
+    -- Do not retouch z_order / colors / images — board owns layout.
 end
 
 local function resolve_nodes()
@@ -290,17 +222,10 @@ local function resolve_nodes()
         return false, 'board_missing'
     end
 
-    local layout_main = child(board, 'layout_main')
     local layout_slot = child(board, 'layout_slot')
     local layout_button = child(board, 'layout_button')
     local layout_tip = child(board, 'layout_提示')
-    local title_row = child(layout_main, 'text')
-    title_label = child(title_row, '角色选择')
-        or try_get_ui(BOARD_NAME .. '.layout_main.text.角色选择')
-    title_deco_left = child(title_row, 'image_left')
-    title_deco_right = child(title_row, 'image_right')
-    image_bg = child(layout_main, 'image_bg')
-        or try_get_ui(BOARD_NAME .. '.layout_main.image_bg')
+    -- Title / deco / bg / fonts: leave exactly as the editor board defines.
     message_label = child(layout_tip, 'Lable_提示')
         or try_get_ui(BOARD_NAME .. '.layout_提示.Lable_提示')
 
@@ -324,11 +249,10 @@ local function resolve_nodes()
             name = child(tishi, 'name') or child(root, 'name'),
             chapter = child(tishi, 'chapter') or child(root, 'chapter'),
             time = child(tishi, 'time') or child(root, 'time'),
-            index = child(root, 'index'),
+            last_empty = nil,
+            last_selected = nil,
         }
-        if card_nodes[index].index then
-            set_text(card_nodes[index].index, INDEX_LABEL[index] or ('位 ' .. tostring(index)))
-        end
+        -- Do not rewrite index/title art — board already has 位 一…五.
     end
 
     btn.back = child(layout_button, 'button_返回')
@@ -346,26 +270,40 @@ local function resolve_nodes()
     return true, 'ok'
 end
 
+---Sync card state without rebinding static board art (icons / fonts / colors).
 local function apply_card(slot_index, slot, selected)
     local nodes = card_nodes[slot_index]
     if nodes == nil then
         return
     end
     local empty = slot == nil or slot.empty == true
-    set_image(nodes.frame, selected and ICON.panel_selected or ICON.panel)
-    set_visible(nodes.empty_icon, empty)
-    set_visible(nodes.portrait, not empty)
-    set_visible(nodes.ring, selected and not empty)
-    -- selected_mark only for filled selected cards (empty + mark looks wrong)
-    set_visible(nodes.selected_mark, selected and not empty)
+
+    if nodes.last_selected ~= selected then
+        -- Selection chrome only; unselected keeps board frame image.
+        if selected then
+            set_image(nodes.frame, ICON.panel_selected)
+        else
+            set_image(nodes.frame, ICON.panel)
+        end
+        -- selected_mark is authored on the board; show only when selected.
+        set_visible(nodes.selected_mark, selected)
+        set_visible(nodes.ring, selected and not empty)
+        nodes.last_selected = selected
+    else
+        set_visible(nodes.ring, selected and not empty)
+    end
+
+    if nodes.last_empty ~= empty then
+        set_visible(nodes.empty_icon, empty)
+        set_visible(nodes.portrait, not empty)
+        nodes.last_empty = empty
+    end
 
     if empty then
+        -- Match board default empty copy; never re-set icon image IDs.
         set_text(nodes.name, '空 位')
         set_text(nodes.chapter, '尚未立档')
         set_text(nodes.time, '点击新建角色')
-        if nodes.empty_icon then
-            set_image(nodes.empty_icon, ICON.empty)
-        end
     else
         set_text(nodes.name, tostring(slot.display_name or '未命名'))
         set_text(nodes.chapter, tostring(slot.chapter_hint or ''))
@@ -374,9 +312,6 @@ local function apply_card(slot_index, slot, selected)
             time_line = tostring(slot.play_time_label) .. ' · ' .. tostring(slot.updated_label)
         end
         set_text(nodes.time, tostring(time_line))
-        if nodes.portrait then
-            set_image(nodes.portrait, ICON.portrait)
-        end
     end
 end
 
@@ -570,7 +505,6 @@ function SaveSlotShell.mount(options)
         end
     end)
     harden_ui_block()
-    polish_title_contrast()
     lock_map_input(player)
 
     -- Hide loading cover host if still intercepting clicks.
@@ -605,10 +539,6 @@ function SaveSlotShell.unmount()
     card_nodes = {}
     btn = { back = nil, delete = nil, create = nil, enter = nil }
     message_label = nil
-    title_label = nil
-    title_deco_left = nil
-    title_deco_right = nil
-    image_bg = nil
     swallow_nodes = {}
     mounted = false
 end
