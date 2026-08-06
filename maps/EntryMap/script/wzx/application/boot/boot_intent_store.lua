@@ -3,7 +3,13 @@
 
 local BootIntentStore = {}
 
+-- Written relative to process CWD (often Engine/Binaries/Win64). Also try project custom.
 local FILE_NAME = 'wzx_boot_intent.lua'
+local FILE_CANDIDATES = {
+    'wzx_boot_intent.lua',
+    '../../LocalData/yeyu/custom/wzx_boot_intent.lua',
+    'custom/wzx_boot_intent.lua',
+}
 
 local function serialize_value(value, depth)
     depth = depth or 0
@@ -64,15 +70,22 @@ function BootIntentStore.write(intent)
         return false
     end
     local body = 'return ' .. serialize_value(intent)
-    local ok, err = pcall(function()
-        local f = io.open(FILE_NAME, 'w')
-        if not f then
-            error('open_failed')
+    local i
+    for i = 1, #FILE_CANDIDATES do
+        local path = FILE_CANDIDATES[i]
+        local ok = pcall(function()
+            local f = io.open(path, 'w')
+            if not f then
+                error('open_failed')
+            end
+            f:write(body)
+            f:close()
+        end)
+        if ok then
+            return true
         end
-        f:write(body)
-        f:close()
-    end)
-    return ok == true
+    end
+    return false
 end
 
 ---Read and clear intent. Returns table or nil.
@@ -82,31 +95,48 @@ function BootIntentStore.read_and_clear()
         return nil
     end
     local intent = nil
-    pcall(function()
-        local f = io.open(FILE_NAME, 'r')
-        if not f then
-            return
-        end
-        local src = f:read('*a')
-        f:close()
-        if type(src) ~= 'string' or src == '' then
-            return
-        end
-        local chunk = loadstring or load
-        if type(chunk) ~= 'function' then
-            return
-        end
-        local loader = chunk(src)
-        if type(loader) == 'function' then
-            local ok, value = pcall(loader)
-            if ok and type(value) == 'table' then
-                intent = value
+    local used_path = nil
+    local i
+    for i = 1, #FILE_CANDIDATES do
+        local path = FILE_CANDIDATES[i]
+        pcall(function()
+            local f = io.open(path, 'r')
+            if not f then
+                return
             end
+            local src = f:read('*a')
+            f:close()
+            if type(src) ~= 'string' or src == '' then
+                return
+            end
+            local chunk = loadstring or load
+            if type(chunk) ~= 'function' then
+                return
+            end
+            local loader = chunk(src)
+            if type(loader) == 'function' then
+                local ok, value = pcall(loader)
+                if ok and type(value) == 'table' then
+                    intent = value
+                    used_path = path
+                end
+            end
+        end)
+        if intent then
+            break
         end
-    end)
-    pcall(function()
-        os.remove(FILE_NAME)
-    end)
+    end
+    if used_path then
+        pcall(function()
+            os.remove(used_path)
+        end)
+    end
+    -- Best-effort clear all candidates
+    for i = 1, #FILE_CANDIDATES do
+        pcall(function()
+            os.remove(FILE_CANDIDATES[i])
+        end)
+    end
     return intent
 end
 

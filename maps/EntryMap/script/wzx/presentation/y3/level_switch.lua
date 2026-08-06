@@ -31,17 +31,30 @@ function LevelSwitch.to(level_id)
         return false
     end
     switching = true
-    -- Prefer GameAPI with skip_loading_ui: default LoadingPanel uses modern stock art (e.g. 106407).
-    local ok, err = pcall(function()
-        if GameAPI and GameAPI.request_switch_level then
-            -- (level_id, load_same_world?, skip_loading_ui?)
-            GameAPI.request_switch_level(level_id, false, true)
-        else
-            y3.game.switch_level(level_id)
+    -- Hide stock loading boards before switch (modern 106407 flash).
+    pcall(function()
+        local Kit = require 'wzx.presentation.y3.runtime_ui_kit'
+        local player = Kit.get_player()
+        if player and y3.ui and y3.ui.get_ui then
+            local names = { 'LoadingPanel', 'LogoPanel' }
+            local i
+            for i = 1, #names do
+                local ok_ui, board = pcall(function()
+                    return y3.ui.get_ui(player, names[i])
+                end)
+                if ok_ui and board and board.set_visible then
+                    board:set_visible(false)
+                end
+            end
         end
     end)
+
+    -- Use y3.game.switch_level (UUID). 3-arg GameAPI skip_loading_ui was unreliable here.
+    local ok, err = pcall(function()
+        y3.game.switch_level(level_id)
+    end)
     if ok then
-        info('switch_level → ' .. level_id .. ' (skip_loading_ui)')
+        info('switch_level → ' .. level_id)
     else
         switching = false
         warn('switch_level error: ' .. tostring(err))
