@@ -25,6 +25,8 @@ local INDEX_LABEL = {
     [5] = '位 五',
 }
 
+local DEFAULT_TIP = '点选角色位 · 空位可新建 · 有档可进入'
+
 local mounted = false
 local flow = nil
 local board = nil
@@ -40,6 +42,10 @@ local btn = {
     enter = nil,
 }
 local message_label = nil
+local title_label = nil
+local title_deco_left = nil
+local title_deco_right = nil
+local image_bg = nil
 local swallow_nodes = {}
 
 local function info(msg)
@@ -230,15 +236,71 @@ local function harden_ui_block()
     end
 end
 
+---Title sits on fog bg and washes out; boost contrast at mount.
+local function polish_title_contrast()
+    if title_label then
+        pcall(function()
+            if title_label.set_text_color then
+                -- Brighter gold than board default (240,215,140)
+                title_label:set_text_color(255, 236, 175, 255)
+            end
+            if title_label.set_font_size then
+                title_label:set_font_size(72)
+            end
+        end)
+        set_text(title_label, '选择角色')
+    end
+    -- Darken fullscreen fog slightly so gold title / cards pop.
+    if image_bg then
+        pcall(function()
+            if image_bg.set_image_color then
+                image_bg:set_image_color(70, 78, 88, 255)
+            end
+            if image_bg.set_alpha then
+                -- 0~1 or 0~255 depending on build; try fraction first.
+                image_bg:set_alpha(0.82)
+            end
+        end)
+    end
+    if title_deco_left then
+        pcall(function()
+            if title_deco_left.set_image_color then
+                title_deco_left:set_image_color(255, 230, 170, 255)
+            end
+            if title_deco_left.set_alpha then
+                title_deco_left:set_alpha(1)
+            end
+        end)
+    end
+    if title_deco_right then
+        pcall(function()
+            if title_deco_right.set_image_color then
+                title_deco_right:set_image_color(255, 230, 170, 255)
+            end
+            if title_deco_right.set_alpha then
+                title_deco_right:set_alpha(1)
+            end
+        end)
+    end
+end
+
 local function resolve_nodes()
     board = try_get_ui(BOARD_NAME)
     if board == nil then
         return false, 'board_missing'
     end
 
+    local layout_main = child(board, 'layout_main')
     local layout_slot = child(board, 'layout_slot')
     local layout_button = child(board, 'layout_button')
     local layout_tip = child(board, 'layout_提示')
+    local title_row = child(layout_main, 'text')
+    title_label = child(title_row, '角色选择')
+        or try_get_ui(BOARD_NAME .. '.layout_main.text.角色选择')
+    title_deco_left = child(title_row, 'image_left')
+    title_deco_right = child(title_row, 'image_right')
+    image_bg = child(layout_main, 'image_bg')
+        or try_get_ui(BOARD_NAME .. '.layout_main.image_bg')
     message_label = child(layout_tip, 'Lable_提示')
         or try_get_ui(BOARD_NAME .. '.layout_提示.Lable_提示')
 
@@ -363,7 +425,10 @@ local function apply_view(view)
 
     local msg = view.message
     if msg == nil or msg == '' then
-        msg = view.hint or '点选角色位 · 空位可新建 · 有档可进入'
+        msg = view.hint
+    end
+    if msg == nil or msg == '' then
+        msg = DEFAULT_TIP
     end
     set_text(message_label, msg)
 end
@@ -505,6 +570,7 @@ function SaveSlotShell.mount(options)
         end
     end)
     harden_ui_block()
+    polish_title_contrast()
     lock_map_input(player)
 
     -- Hide loading cover host if still intercepting clicks.
@@ -539,6 +605,10 @@ function SaveSlotShell.unmount()
     card_nodes = {}
     btn = { back = nil, delete = nil, create = nil, enter = nil }
     message_label = nil
+    title_label = nil
+    title_deco_left = nil
+    title_deco_right = nil
+    image_bg = nil
     swallow_nodes = {}
     mounted = false
 end

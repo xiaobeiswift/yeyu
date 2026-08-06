@@ -59,7 +59,7 @@ local function build_view(state)
     elseif state.screen == SCREEN.BACKEND then
         view.hint = '点击本地档进入；官方云档当前锁定'
     elseif state.screen == SCREEN.SLOTS then
-        view.hint = '点选存档槽 → 新建（若空）→ 进入游戏'
+        view.hint = '点选角色位 · 空位可新建 · 有档可进入'
     elseif state.screen == SCREEN.OFFICIAL_BLOCKED then
         view.hint = '官方云档未验证 · 点返回'
     elseif state.screen == SCREEN.ENTERED then
@@ -185,7 +185,7 @@ function BootFlow:select_slot(slot_index)
         return invalid('SLOT_INDEX_INVALID', { slot_index = slot_index })
     end
     state.selected_slot_index = slot_index
-    state.message = '已选槽 ' .. tostring(slot_index)
+    state.message = '已选角色位 ' .. tostring(slot_index)
     return self:get_view()
 end
 
@@ -220,7 +220,7 @@ function BootFlow:delete_slot(slot_index)
     if not cleared.ok then
         return cleared
     end
-    state.message = '已清空槽 ' .. tostring(slot_index)
+    state.message = '已清空角色位 ' .. tostring(slot_index)
     return self:get_view()
 end
 
@@ -240,7 +240,7 @@ function BootFlow:confirm_enter()
         return slot
     end
     if slot.value.empty then
-        state.message = '空槽不能进入。先点「新建」。'
+        state.message = '空位不能进入。先点「新建」。'
         return self:get_view()
     end
     state.screen = SCREEN.ENTERED
@@ -269,7 +269,7 @@ function BootFlow:back()
     elseif state.screen == SCREEN.ENTERED then
         state.screen = SCREEN.SLOTS
         state.entered_payload = nil
-        state.message = '已返回存档选择'
+        state.message = '已返回角色选择'
     end
     return self:get_view()
 end
