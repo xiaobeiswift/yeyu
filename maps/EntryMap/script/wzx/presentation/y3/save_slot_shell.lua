@@ -30,6 +30,7 @@ local board = nil
 local player = nil
 local on_entered_cb = nil
 local events_bound = false
+local map_input_locked = false
 local card_nodes = {} -- [slot_index] = { root, frame, empty_icon, portrait, ring, selected_mark, name, chapter, time }
 local btn = {
     back = nil,
@@ -38,6 +39,7 @@ local btn = {
     enter = nil,
 }
 local message_label = nil
+local swallow_nodes = {}
 
 local function info(msg)
     local text = '[WZX][SaveSlot] ' .. tostring(msg)
@@ -114,6 +116,117 @@ end
 
 local function set_button_enable(ui, enable)
     Kit.set_button_enable(ui, enable)
+end
+
+---Swallow pointer events so they don't fall through to the world/camera.
+local function set_swallow(ui, intercepts)
+    if ui == nil then
+        return
+    end
+    pcall(function()
+        if ui.set_intercepts_operations then
+            ui:set_intercepts_operations(intercepts == true)
+        end
+    end)
+end
+
+---Disable world interaction while the character panel is up.
+---UI swallow alone is not enough: empty gaps and camera drag still hit the map.
+local function lock_map_input(p)
+    p = p or player or get_player()
+    if p == nil then
+        return
+    end
+    pcall(function()
+        if y3.camera and y3.camera.disable_camera_move then
+            y3.camera.disable_camera_move(p)
+        end
+    end)
+    pcall(function()
+        if p.set_mouse_click_selection then
+            p:set_mouse_click_selection(false)
+        end
+    end)
+    pcall(function()
+        if p.set_mouse_drag_selection then
+            p:set_mouse_drag_selection(false)
+        end
+    end)
+    pcall(function()
+        if p.set_mouse_wheel then
+            p:set_mouse_wheel(false)
+        end
+    end)
+    -- Drop any current selection so map units don't stay "commandable".
+    pcall(function()
+        if p.select_unit and y3.unit_group and y3.unit_group.create then
+            p:select_unit(y3.unit_group.create())
+        end
+    end)
+    map_input_locked = true
+end
+
+local function unlock_map_input(p)
+    if not map_input_locked then
+        return
+    end
+    p = p or player or get_player()
+    if p == nil then
+        map_input_locked = false
+        return
+    end
+    pcall(function()
+        if y3.camera and y3.camera.enable_camera_move then
+            y3.camera.enable_camera_move(p)
+        end
+    end)
+    pcall(function()
+        if p.set_mouse_click_selection then
+            p:set_mouse_click_selection(true)
+        end
+    end)
+    pcall(function()
+        if p.set_mouse_drag_selection then
+            p:set_mouse_drag_selection(true)
+        end
+    end)
+    pcall(function()
+        if p.set_mouse_wheel then
+            p:set_mouse_wheel(true)
+        end
+    end)
+    map_input_locked = false
+end
+
+local function harden_ui_block()
+    swallow_nodes = {}
+    local function track(ui)
+        if ui ~= nil then
+            swallow_nodes[#swallow_nodes + 1] = ui
+            set_swallow(ui, true)
+        end
+    end
+
+    track(board)
+    local layout_main = child(board, 'layout_main')
+    local layout_slot = child(board, 'layout_slot')
+    local layout_button = child(board, 'layout_button')
+    local layout_tip = child(board, 'layout_提示')
+    track(layout_main)
+    track(layout_slot)
+    track(layout_button)
+    track(layout_tip)
+    track(child(layout_main, 'image_bg'))
+    -- Full-screen bg is the primary hit surface over the world.
+    local bg = child(layout_main, 'image_bg')
+    if bg then
+        pcall(function()
+            if bg.set_z_order then
+                -- Keep under title/cards/buttons but above world.
+                bg:set_z_order(1)
+            end
+        end)
+    end
 end
 
 local function resolve_nodes()
@@ -211,6 +324,7 @@ local function apply_view(view)
 
     if view.entered then
         set_visible(board, false)
+        unlock_map_input(player)
         if type(on_entered_cb) == 'function' then
             pcall(on_entered_cb, view.entered_payload)
         end
@@ -220,10 +334,16 @@ local function apply_view(view)
     if view.screen ~= 'SLOTS' then
         -- This shell only owns the character-select screen.
         set_visible(board, view.screen == 'SLOTS')
+        if view.screen == 'SLOTS' then
+            lock_map_input(player)
+        else
+            unlock_map_input(player)
+        end
         return
     end
 
     set_visible(board, true)
+    lock_map_input(player)
 
     local slots = view.slots or {}
     local selected = view.selected_slot_index or 1
@@ -380,10 +500,9 @@ function SaveSlotShell.mount(options)
         if board.set_z_order then
             board:set_z_order(9000)
         end
-        if board.set_intercepts_operations then
-            board:set_intercepts_operations(true)
-        end
     end)
+    harden_ui_block()
+    lock_map_input(player)
 
     -- Hide loading cover host if still intercepting clicks.
     pcall(function()
@@ -395,19 +514,20 @@ function SaveSlotShell.mount(options)
 
     present(flow:open_local_slots())
     mounted = true
-    info('mounted character select')
+    info('mounted character select (map input locked)')
     return true, 'mounted'
 end
 
 function SaveSlotShell.unmount()
+    local p = player
     if board then
         set_visible(board, false)
-        pcall(function()
-            if board.set_intercepts_operations then
-                board:set_intercepts_operations(false)
-            end
-        end)
+        local index
+        for index = 1, #swallow_nodes do
+            set_swallow(swallow_nodes[index], false)
+        end
     end
+    unlock_map_input(p)
     board = nil
     player = nil
     flow = nil
@@ -416,6 +536,7 @@ function SaveSlotShell.unmount()
     card_nodes = {}
     btn = { back = nil, delete = nil, create = nil, enter = nil }
     message_label = nil
+    swallow_nodes = {}
     mounted = false
 end
 
