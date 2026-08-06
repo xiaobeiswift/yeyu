@@ -2,24 +2,43 @@
 
 local LevelSwitch = {}
 
+local switching = false
+
 local function info(msg)
     print('[WZX][Level] ' .. tostring(msg))
 end
 
----@param level_id string
+local function warn(msg)
+    print('[WZX][Level] WARN ' .. tostring(msg))
+end
+
+---@param level_id string UUID string required by engine convert_level_id
 ---@return boolean
 function LevelSwitch.to(level_id)
     if type(level_id) ~= 'string' or level_id == '' then
         return false
     end
+    -- Decimal header.map ids look like long digit strings and crash convert_level_id.
+    if level_id:match('^%d+$') then
+        warn('refusing decimal level id (need UUID): ' .. level_id)
+        return false
+    end
     if type(y3) ~= 'table' or type(y3.game) ~= 'table' or type(y3.game.switch_level) ~= 'function' then
         return false
     end
-    local ok = pcall(function()
+    if switching then
+        warn('switch already in flight')
+        return false
+    end
+    switching = true
+    local ok, err = pcall(function()
         y3.game.switch_level(level_id)
     end)
     if ok then
         info('switch_level → ' .. level_id)
+    else
+        switching = false
+        warn('switch_level error: ' .. tostring(err))
     end
     return ok == true
 end
@@ -29,6 +48,9 @@ end
 ---@return boolean ok
 ---@return string detail
 function LevelSwitch.go_create_character(slot_index)
+    if switching then
+        return false, 'SWITCH_IN_FLIGHT'
+    end
     local CreateCharacterIntent =
         require 'wzx.application.boot.create_character_intent'
     local prepared = CreateCharacterIntent.prepare_go(slot_index)

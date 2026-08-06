@@ -106,8 +106,9 @@ GameHudShell.mount({
 | 项 | 值 |
 |---|---|
 | 关卡目录 | `maps/CreateCharacter` |
-| 关卡 ID | `160897935248241842341095906248275415972`（`wzx.config.map_ids.CREATE_CHARACTER`） |
-| EntryMap ID | `153474936276712664214184199110824525261` |
+| 关卡 ID（**UUID，切图用**） | `790bd0ad-91e6-11f1-a87d-25a4c7a653a4` |
+| header.map 十进制（勿直接 switch） | `160897935248241842341095906248275415972` |
+| EntryMap UUID | `73763292-8f4c-11f1-9d30-93a4cd3b7dcd` |
 | 入口 | save_slot「新建」→ `CreateCharacterIntent.begin_from_slot` → `switch_level` |
 | 回程 | 立档图 SPACE 占位立档 / ESC 取消 → 写 intent → 回 EntryMap 直开 save_slot |
 | 跨图状态 | `custom/wzx_boot_intent.lua`（`BootIntentStore`） |

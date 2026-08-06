@@ -8,11 +8,14 @@ local case = Harness.case
 local assert = Harness.assert
 
 return {
-    case('map ids are non-empty strings', function()
+    case('map ids are UUID strings not pure decimal', function()
         assert.equal(type(MapIds.ENTRY) == 'string', true)
         assert.equal(type(MapIds.CREATE_CHARACTER) == 'string', true)
-        assert.equal(#MapIds.ENTRY > 10, true)
-        assert.equal(#MapIds.CREATE_CHARACTER > 10, true)
+        -- Engine convert_level_id requires UUID form
+        assert.equal(MapIds.CREATE_CHARACTER:match('^%x+%-%x+%-%x+%-%x+%-%x+$') ~= nil, true)
+        assert.equal(MapIds.ENTRY:match('^%x+%-%x+%-%x+%-%x+%-%x+$') ~= nil, true)
+        assert.equal(MapIds.CREATE_CHARACTER, '790bd0ad-91e6-11f1-a87d-25a4c7a653a4')
+        assert.equal(MapIds.ENTRY, '73763292-8f4c-11f1-9d30-93a4cd3b7dcd')
     end),
 
     case('prepare_go rejects occupied slot', function()
