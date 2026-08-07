@@ -1,54 +1,42 @@
-# 新建角色 · 立档选人（预览）
+# 新建角色 · 立档（编辑器画板）
 
-对应玩家流程：
+## 你现在该做的
+
+1. **打开预览**（对照搭板）  
+   ```text
+   assets/ui/create_character/preview/board.html
+   ```
+2. **导入资源**  
+   ```text
+   assets/ui/create_character/generated/
+   ```
+3. **按说明在 Y3 建画板**  
+   - `IMPORT.md` — 操作步骤  
+   - `BOARD_CONTRACT.md` — 节点命名  
+4. 保存后告诉我「画板好了」→ 我接 shell
+
+## 流程
 
 ```text
-选择角色（空位）→ 新建 → 立档选人 → 确认 → 回写角色位
+save_slot「新建」→ 显示 create_character 画板 → 确认写槽 → 回 save_slot
 ```
 
-## 打开预览
+逻辑：`wzx/presentation/y3/create_character_shell.lua`（**只绑定，不 create_child**）  
+名录：`wzx/config/content/create_character_roster.lua`
 
-浏览器打开：
+## 目录
 
-```text
-assets/ui/create_character/preview/create_character.html
-```
+| 路径 | 内容 |
+|------|------|
+| `preview/board.html` | **1:1 契约预览**（主） |
+| `preview/create_character.html` | 旧山径风格草稿 |
+| `generated/` | 可导入 PNG/JPG |
+| `IMPORT.md` | 导入与搭板步骤 |
+| `BOARD_CONTRACT.md` | 节点树契约 |
+| `_gen_assets.py` | 重跑切图 |
 
-视觉方向：**山径散碑**——异形石块沿径参差站立，雾中人影无框，详情是斜倚碎碑铭文（非通栏方板 / 非横轨等大卡片）。
+## 非目标
 
-## 预览可点什么
-
-1. **选择角色**：五座**不规则碑**散落在径上，点空位 → 圆印「新」
-2. **山径立档**：
-   - 雾中剪影（点碑后跳入）
-   - **8 块散落石碑**（位置/旋转/外形各异，非横条网格）
-   - 点碑后右侧浮出**斜倚铭文石**（介绍·风骨·落名）
-   - 圆印「立」→ 回槽
-3. 圆印「入 / 删」
-
-## 与引擎能力对齐（已摸过的边界）
-
-| 预览 | 引擎侧对应 |
-|------|------------|
-| 候选列表点选 | UI 按钮 / 列表 + `add_local_event` |
-| 出场跳入动画 | UI `set_pos`/缩放序列，或单位 `play_animation`（有模型后） |
-| 介绍 + 属性 | 文本节点 + 进度条图/宽度 |
-| 起名 | `输入框`（`get_input_field_content`）+ `Utf8Text` 校验 |
-| 回写槽 | `LocalRunSlotStore:create` → 日后 `CreateNewSave` |
-
-## 候选人物（预览表）
-
-静态写在 `preview/create_character.js` 的 `ROSTER`：
-
-- 雾中客 · 均衡剑  
-- 霜刃行 · 爆发刀  
-- 青囊影 · 稳健杂学  
-- 踏云生 · 机变轻功  
-
-引擎实现时抽到 `wzx` 配置表，HTML 只作视觉契约。
-
-## 非目标（预览不做）
-
-- 真 3D 骨骼 / 捏脸  
+- 运行时拼 UI（已弃）  
 - 云档 CreateNewSave  
-- 与正式 `char_hero` catalog id 的最终绑定（可第二步对齐）
+- 捏脸  

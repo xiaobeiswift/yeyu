@@ -1,0 +1,16 @@
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\btn_primary_normal.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\btn_primary_hover.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\btn_primary_pressed.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\btn_secondary_normal.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\btn_secondary_hover.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\btn_danger_normal.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\btn_danger_hover.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\btn_ghost_normal.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\panel_slot.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\panel_slot_selected.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\panel_modal.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\icon_empty_slot.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\portrait_placeholder.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\portrait_ring.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\deco_title_line_left.png
+D:\y3\games\2.0\game\LocalData\yeyu\assets\ui\save_slot\generated\deco_title_line_right.png

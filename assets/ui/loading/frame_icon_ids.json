@@ -1,0 +1,307 @@
+﻿{
+    "fps":  12,
+    "width":  1280,
+    "height":  720,
+    "frames":  [
+                   {
+                       "index":  1,
+                       "name":  "frame_001",
+                       "icon_id":  134229316
+                   },
+                   {
+                       "index":  2,
+                       "name":  "frame_002",
+                       "icon_id":  134224569
+                   },
+                   {
+                       "index":  3,
+                       "name":  "frame_003",
+                       "icon_id":  134227835
+                   },
+                   {
+                       "index":  4,
+                       "name":  "frame_004",
+                       "icon_id":  134252181
+                   },
+                   {
+                       "index":  5,
+                       "name":  "frame_005",
+                       "icon_id":  134264125
+                   },
+                   {
+                       "index":  6,
+                       "name":  "frame_006",
+                       "icon_id":  134230498
+                   },
+                   {
+                       "index":  7,
+                       "name":  "frame_007",
+                       "icon_id":  134229477
+                   },
+                   {
+                       "index":  8,
+                       "name":  "frame_008",
+                       "icon_id":  134257489
+                   },
+                   {
+                       "index":  9,
+                       "name":  "frame_009",
+                       "icon_id":  134276407
+                   },
+                   {
+                       "index":  10,
+                       "name":  "frame_010",
+                       "icon_id":  134230461
+                   },
+                   {
+                       "index":  11,
+                       "name":  "frame_011",
+                       "icon_id":  134219928
+                   },
+                   {
+                       "index":  12,
+                       "name":  "frame_012",
+                       "icon_id":  134262437
+                   },
+                   {
+                       "index":  13,
+                       "name":  "frame_013",
+                       "icon_id":  134243438
+                   },
+                   {
+                       "index":  14,
+                       "name":  "frame_014",
+                       "icon_id":  134252319
+                   },
+                   {
+                       "index":  15,
+                       "name":  "frame_015",
+                       "icon_id":  134232894
+                   },
+                   {
+                       "index":  16,
+                       "name":  "frame_016",
+                       "icon_id":  134225864
+                   },
+                   {
+                       "index":  17,
+                       "name":  "frame_017",
+                       "icon_id":  134231875
+                   },
+                   {
+                       "index":  18,
+                       "name":  "frame_018",
+                       "icon_id":  134244687
+                   },
+                   {
+                       "index":  19,
+                       "name":  "frame_019",
+                       "icon_id":  134235326
+                   },
+                   {
+                       "index":  20,
+                       "name":  "frame_020",
+                       "icon_id":  134271938
+                   },
+                   {
+                       "index":  21,
+                       "name":  "frame_021",
+                       "icon_id":  134233796
+                   },
+                   {
+                       "index":  22,
+                       "name":  "frame_022",
+                       "icon_id":  134265134
+                   },
+                   {
+                       "index":  23,
+                       "name":  "frame_023",
+                       "icon_id":  134243657
+                   },
+                   {
+                       "index":  24,
+                       "name":  "frame_024",
+                       "icon_id":  134258597
+                   },
+                   {
+                       "index":  25,
+                       "name":  "frame_025",
+                       "icon_id":  134250817
+                   },
+                   {
+                       "index":  26,
+                       "name":  "frame_026",
+                       "icon_id":  134253375
+                   },
+                   {
+                       "index":  27,
+                       "name":  "frame_027",
+                       "icon_id":  134264693
+                   },
+                   {
+                       "index":  28,
+                       "name":  "frame_028",
+                       "icon_id":  134235370
+                   },
+                   {
+                       "index":  29,
+                       "name":  "frame_029",
+                       "icon_id":  134264205
+                   },
+                   {
+                       "index":  30,
+                       "name":  "frame_030",
+                       "icon_id":  134268438
+                   },
+                   {
+                       "index":  31,
+                       "name":  "frame_031",
+                       "icon_id":  134231498
+                   },
+                   {
+                       "index":  32,
+                       "name":  "frame_032",
+                       "icon_id":  134248461
+                   },
+                   {
+                       "index":  33,
+                       "name":  "frame_033",
+                       "icon_id":  134259694
+                   },
+                   {
+                       "index":  34,
+                       "name":  "frame_034",
+                       "icon_id":  134266788
+                   },
+                   {
+                       "index":  35,
+                       "name":  "frame_035",
+                       "icon_id":  134253682
+                   },
+                   {
+                       "index":  36,
+                       "name":  "frame_036",
+                       "icon_id":  134223668
+                   },
+                   {
+                       "index":  37,
+                       "name":  "frame_037",
+                       "icon_id":  134234149
+                   },
+                   {
+                       "index":  38,
+                       "name":  "frame_038",
+                       "icon_id":  134221327
+                   },
+                   {
+                       "index":  39,
+                       "name":  "frame_039",
+                       "icon_id":  134228131
+                   },
+                   {
+                       "index":  40,
+                       "name":  "frame_040",
+                       "icon_id":  134235748
+                   },
+                   {
+                       "index":  41,
+                       "name":  "frame_041",
+                       "icon_id":  134252969
+                   },
+                   {
+                       "index":  42,
+                       "name":  "frame_042",
+                       "icon_id":  134228683
+                   },
+                   {
+                       "index":  43,
+                       "name":  "frame_043",
+                       "icon_id":  134271306
+                   },
+                   {
+                       "index":  44,
+                       "name":  "frame_044",
+                       "icon_id":  134226324
+                   },
+                   {
+                       "index":  45,
+                       "name":  "frame_045",
+                       "icon_id":  134252399
+                   },
+                   {
+                       "index":  46,
+                       "name":  "frame_046",
+                       "icon_id":  134276787
+                   },
+                   {
+                       "index":  47,
+                       "name":  "frame_047",
+                       "icon_id":  134239975
+                   },
+                   {
+                       "index":  48,
+                       "name":  "frame_048",
+                       "icon_id":  134272922
+                   },
+                   {
+                       "index":  49,
+                       "name":  "frame_049",
+                       "icon_id":  134260806
+                   },
+                   {
+                       "index":  50,
+                       "name":  "frame_050",
+                       "icon_id":  134249402
+                   },
+                   {
+                       "index":  51,
+                       "name":  "frame_051",
+                       "icon_id":  134263160
+                   },
+                   {
+                       "index":  52,
+                       "name":  "frame_052",
+                       "icon_id":  134220994
+                   },
+                   {
+                       "index":  53,
+                       "name":  "frame_053",
+                       "icon_id":  134273367
+                   },
+                   {
+                       "index":  54,
+                       "name":  "frame_054",
+                       "icon_id":  134268411
+                   },
+                   {
+                       "index":  55,
+                       "name":  "frame_055",
+                       "icon_id":  134253019
+                   },
+                   {
+                       "index":  56,
+                       "name":  "frame_056",
+                       "icon_id":  134266675
+                   },
+                   {
+                       "index":  57,
+                       "name":  "frame_057",
+                       "icon_id":  134280392
+                   },
+                   {
+                       "index":  58,
+                       "name":  "frame_058",
+                       "icon_id":  134251749
+                   },
+                   {
+                       "index":  59,
+                       "name":  "frame_059",
+                       "icon_id":  134281645
+                   },
+                   {
+                       "index":  60,
+                       "name":  "frame_060",
+                       "icon_id":  134278719
+                   }
+               ]
+}

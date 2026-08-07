@@ -26,6 +26,8 @@ local clear_list = {
     'wzx.presentation.y3.loading_shell',
     'wzx.presentation.y3.loading_frame_ids',
     'wzx.presentation.y3.save_slot_shell',
+    'wzx.presentation.y3.create_character_shell',
+    'wzx.config.content.create_character_roster',
     'wzx.presentation.y3.game_hud_shell',
     'wzx.presentation.y3.boot_menu_shell',
     'wzx.application.boot.local_run_session',

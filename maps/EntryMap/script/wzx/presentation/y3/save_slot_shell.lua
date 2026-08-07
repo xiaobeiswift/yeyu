@@ -443,8 +443,7 @@ local function bind_events()
     end)
 
     Kit.on_click(btn.create, function()
-        -- Empty slot → switch to CreateCharacter map (立档台).
-        local LevelSwitch = require 'wzx.presentation.y3.level_switch'
+        -- Empty slot → same-map create_character shell (UI model showroom).
         local view = flow:get_view()
         if not view.ok then
             present(view)
@@ -458,12 +457,51 @@ local function bind_events()
             set_text(message_label, '有档位请先删除再新建')
             return
         end
-        local ok_sw, detail_sw = LevelSwitch.go_create_character(slot_index)
-        if not ok_sw then
-            set_text(message_label, '无法进入立档图：' .. tostring(detail_sw))
+
+        local CreateCharacterShell = require 'wzx.presentation.y3.create_character_shell'
+        -- Full page switch: shell builds on panel_1 then hides save_slot (not a translucent overlay).
+        local ok_cc, detail_cc = CreateCharacterShell.mount({
+            slot_index = slot_index,
+            on_complete = function(payload)
+                -- Shell already restored save_slot visibility on unmount.
+                harden_ui_block()
+                lock_map_input(player)
+                set_visible(board, true)
+                pcall(function()
+                    if board and board.set_z_order then
+                        board:set_z_order(9000)
+                    end
+                end)
+                if flow then
+                    present(flow:select_slot(payload and payload.slot_index or slot_index))
+                end
+                local name = payload and payload.display_name or '新角色'
+                set_text(message_label, '已立档：' .. tostring(name) .. ' · 可点「进入」')
+                info('page back ← 立档 complete name=' .. tostring(name))
+            end,
+            on_cancel = function()
+                harden_ui_block()
+                lock_map_input(player)
+                set_visible(board, true)
+                pcall(function()
+                    if board and board.set_z_order then
+                        board:set_z_order(9000)
+                    end
+                end)
+                if flow then
+                    present(flow:get_view())
+                end
+                set_text(message_label, '已返回角色选择')
+                info('page back ← 立档 cancel')
+            end,
+        })
+        if not ok_cc then
+            set_visible(board, true)
+            set_text(message_label, '无法打开立档页：' .. tostring(detail_cc))
+            warn('create_character mount failed: ' .. tostring(detail_cc))
             return
         end
-        info('switch → CreateCharacter slot=' .. tostring(slot_index))
+        info('page switch → 立档 slot=' .. tostring(slot_index))
     end)
 
     Kit.on_click(btn.enter, function()

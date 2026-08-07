@@ -58,6 +58,8 @@ GameHudShell.mount({
 | `maps/EntryMap/ui/save_slot.json` | 选择角色画板 |
 | `maps/EntryMap/ui/prefab/save_slot_card.json` | 单卡预制体 |
 | `wzx/presentation/y3/save_slot_shell.lua` | 角色页绑定 + 点击 |
+| `wzx/presentation/y3/create_character_shell.lua` | 立档：名录 + UI 模型 showroom |
+| `wzx/config/content/create_character_roster.lua` | 立档候选名录 |
 | `maps/EntryMap/ui/GameHUD.json` | 局内 host（空壳，运行时挂子节点） |
 | `wzx/presentation/y3/game_hud_shell.lua` | 最小局内 HUD |
 | `wzx/application/boot/local_run_session.lua` | 本地进档会话 |
@@ -99,9 +101,25 @@ GameHudShell.mount({
 | 进档会话 + 最小 HUD | 云档 CreateNewSave / LoadGameSave / hydrate |
 | 返回角色选择（开发按钮） | 任务 / 背包 / 对话 / 轻功等正式 HUD 模块 |
 | 地图输入在角色页锁定、进档后恢复 | 持久化本地槽到磁盘 |
-| **立档图 `CreateCharacter`** | 正式选人 UI / 单位出场动画 |
+| **立档页（同图）** | 编辑器画板 `create_character` + shell 绑定（同 save_slot 模式） |
+| 独立图 `CreateCharacter` | 备用；主路径不再切图 |
 
-### 立档切图
+### 立档（当前主路径）
+
+| 项 | 值 |
+|---|---|
+| 入口 | save_slot「新建」→ `CreateCharacterShell.mount` |
+| 画板 | **`create_character`**（编辑器制作，默认隐藏） |
+| 节点契约 | `assets/ui/create_character/BOARD_CONTRACT.md` |
+| 名录 | `wzx/config/content/create_character_roster.lua` |
+| 预览 | 画板内 `model_preview`（模型控件）+ `set_ui_model_id` |
+| 确认 | `LocalRunSlotStore:create` → 回 save_slot |
+| 取消 | 隐藏 create_character → 显示 save_slot |
+| 表现模块 | `wzx/presentation/y3/create_character_shell.lua`（**只绑定，不 create_child**） |
+
+> 运行时拼 UI 已验证不稳定；立档页与角色选择一样，**外观归编辑器，逻辑归 shell**。
+
+### 立档切图（备用，非主路径）
 
 | 项 | 值 |
 |---|---|
@@ -109,13 +127,11 @@ GameHudShell.mount({
 | 关卡 ID（**UUID，切图用**） | `790bd0ad-91e6-11f1-a87d-25a4c7a653a4` |
 | header.map 十进制（勿直接 switch） | `160897935248241842341095906248275415972` |
 | EntryMap UUID | `73763292-8f4c-11f1-9d30-93a4cd3b7dcd` |
-| 入口 | save_slot「新建」→ `CreateCharacterIntent.begin_from_slot` → `switch_level` |
-| 回程 | 立档图 SPACE 占位立档 / ESC 取消 → 写 intent → 回 EntryMap 直开 save_slot |
+| 入口 | `LevelSwitch.go_create_character` / intent（需时再启用） |
 | 跨图状态 | `custom/wzx_boot_intent.lua`（`BootIntentStore`） |
-| 切图 Loading | `GameAPI.request_switch_level(id, false, true)` **跳过**引擎默认 LoadingPanel（现代风 106407） |
+| 切图 Loading | `GameAPI.request_switch_level(id, false, true)` **跳过**引擎默认 LoadingPanel |
 
-立档图脚本：`maps/CreateCharacter/script/main.lua`（package.path 指向 EntryMap/script 以共用 wzx/y3）。  
-`CreateCharacter/ui/LoadingPanel` 已默认隐藏，背景改绑雾钟 `134230791` 兜底。
+立档图脚本：`maps/CreateCharacter/script/main.lua`（package.path 指向 EntryMap/script 以共用 wzx/y3）。
 
 ## 官方何时从锁定变为可进
 

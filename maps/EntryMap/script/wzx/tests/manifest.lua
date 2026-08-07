@@ -44,6 +44,7 @@ return {
     'wzx.tests.test_boot_flow',
     'wzx.tests.test_local_run_session',
     'wzx.tests.test_create_character_intent',
+    'wzx.tests.test_create_character_roster',
     'wzx.tests.test_encounter_quest_bridge',
     'wzx.tests.test_dialogue_system',
     'wzx.tests.test_world_system',

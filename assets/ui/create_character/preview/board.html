@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>create_character · 编辑器 1:1 契约预览</title>
+  <link rel="stylesheet" href="board.css" />
+</head>
+<body>
+  <!--
+    节点名 = Y3 画板契约（BOARD_CONTRACT.md）
+    打开本页对照搭板；资源在 ../generated/
+  -->
+  <div class="toolbar">
+    <strong>create_character</strong>
+    <span>1920×1080 · 点名单换预览 · 导入后按节点名绑脚本</span>
+    <a href="create_character.html">旧山径预览</a>
+  </div>
+
+  <div class="viewport">
+    <div class="board" id="create_character" data-y3="create_character">
+      <img class="image_bg" data-y3="image_bg" src="../generated/bg_fog_clock.jpg" alt="" />
+
+      <div class="layout_title" data-y3="layout_title">
+        <img class="deco deco--left" src="../generated/deco_title_left.png" alt="" />
+        <div class="title-block">
+          <div class="label_title" data-y3="label_title">山 径 立 档</div>
+          <div class="label_subtitle" data-y3="label_subtitle" id="label_subtitle">角色位 1 · 点选风骨后确认</div>
+        </div>
+        <img class="deco deco--right" src="../generated/deco_title_right.png" alt="" />
+      </div>
+
+      <div class="layout_roster" data-y3="layout_roster" id="layout_roster"></div>
+
+      <div class="layout_stage" data-y3="layout_stage">
+        <img class="image_stage_frame" data-y3="image_stage_frame" src="../generated/panel_stage_frame.png" alt="" />
+        <div class="model_preview" data-y3="model_preview" id="model_preview" title="Y3: 模型控件">
+          <img class="model_fallback" src="../generated/model_placeholder.png" alt="模型占位" />
+          <span class="model_badge">model_preview · 模型</span>
+        </div>
+        <div class="label_glyph" data-y3="label_glyph" id="label_glyph">雾</div>
+        <div class="label_model_caption" data-y3="label_model_caption" id="label_model_caption">雾中客 · 预览</div>
+      </div>
+
+      <div class="layout_detail" data-y3="layout_detail">
+        <img class="image_detail_panel" data-y3="image_detail_panel" src="../generated/panel_detail.png" alt="" />
+        <div class="detail-inner">
+          <div class="label_name" data-y3="label_name" id="label_name">雾中客</div>
+          <div class="label_role" data-y3="label_role" id="label_role">无名剑客 · 均衡 · 剑</div>
+          <div class="label_intro" data-y3="label_intro" id="label_intro">钟下无碑。步履轻，刃意沉。</div>
+          <div class="stats" id="stats"></div>
+        </div>
+      </div>
+
+      <div class="layout_button" data-y3="layout_button">
+        <button type="button" class="button_返回" data-y3="button_返回" id="button_返回">
+          <img src="../generated/btn_back.png" alt="" />
+          <span>返 回</span>
+        </button>
+        <button type="button" class="button_确认立档" data-y3="button_确认立档" id="button_确认立档">
+          <img src="../generated/btn_confirm.png" alt="" />
+          <span>确 认 立 档</span>
+        </button>
+      </div>
+
+      <div class="layout_tip" data-y3="layout_tip">
+        <div class="label_tip" data-y3="label_tip" id="label_tip">编辑器搭板后由 create_character_shell 绑定</div>
+      </div>
+    </div>
+  </div>
+
+  <aside class="side">
+    <h2>导入清单</h2>
+    <ol>
+      <li>浏览器打开本页，对照布局</li>
+      <li>Y3 新建画板 <code>create_character</code>（默认隐藏）</li>
+      <li>导入 <code>generated/</code> 下 PNG 为图标</li>
+      <li>按下方节点名建控件（可复制）</li>
+      <li>保存地图 → 告诉我「画板好了」</li>
+    </ol>
+    <h2>节点树</h2>
+    <pre id="tree"></pre>
+    <h2>资源</h2>
+    <ul class="res">
+      <li>bg_fog_clock.jpg</li>
+      <li>panel_stage_frame.png</li>
+      <li>panel_detail.png</li>
+      <li>panel_roster_item(.selected).png</li>
+      <li>btn_back / btn_confirm</li>
+      <li>bar_stat_track / fill</li>
+      <li>model_placeholder.png（仅预览；引擎用模型控件）</li>
+    </ul>
+  </aside>
+
+  <script src="board.js"></script>
+</body>
+</html>
